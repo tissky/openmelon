@@ -1,0 +1,15 @@
+# Skill-Plus Engine community ownership
+
+/engine/                  @skillplus-engine/maintainers
+/dispatcher/              @skillplus/spec-approvers @skillplus-engine/maintainers
+/registry/                @skillplus/spec-approvers @skillplus-engine/maintainers
+/sandbox/                 @skillplus/security-reviewers @skillplus-engine/maintainers
+/runtime-python/          @skillplus/security-reviewers @skillplus-engine/maintainers
+/plugins-builtin/         @skillplus/security-reviewers @skillplus-engine/maintainers
+/integration/             @skillplus-engine/reviewers
+/.github/                 @skillplus-engine/maintainers
+/CODE_OF_CONDUCT.md       @skillplus-engine/maintainers
+/SECURITY.md              @skillplus/security-reviewers @skillplus-engine/maintainers
+/GOVERNANCE.md            @skillplus-engine/maintainers
+/RFC.md                   @skillplus/spec-approvers @skillplus-engine/maintainers
+/CLA.md                   @skillplus-engine/maintainers

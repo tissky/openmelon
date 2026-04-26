@@ -1,0 +1,54 @@
+name: Feature request
+description: Propose a Skill-Plus Engine feature, runtime change, sandbox change, or integration improvement.
+title: "[Feature]: "
+labels: ["type:docs"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For breaking dispatcher, registry, runtime contract, sandbox, B-face output, license, CLA, or governance changes, expect maintainers to request an RFC.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user, host-system, or contributor problem does this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: Describe the change you want.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - engine
+        - dispatcher
+        - registry
+        - sandbox
+        - runtime-python
+        - plugins-builtin
+        - integration
+        - documentation
+        - governance
+        - other
+    validations:
+      required: true
+  - type: checkboxes
+    id: impact
+    attributes:
+      label: Impact
+      options:
+        - label: This may be a breaking change.
+        - label: This may require an RFC.
+        - label: This may require security review.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false
