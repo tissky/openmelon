@@ -1,0 +1,22 @@
+{
+  "project": {
+    "id": "demo-food-project",
+    "name": "Street Food Realism Demo",
+    "platform": "xiaohongshu",
+    "audience": "urban food explorers",
+    "persona": "ordinary after-work food explorer"
+  },
+  "intent": "下班后在老小区楼下吃一碗牛肉面，想发一条真实的探店帖",
+  "workflow": "food_exploration",
+  "stage": "visual_concretization",
+  "skillplus_package": "../../../skillplus/examples/food-street-realism.skillplus",
+  "compile": {
+    "target": "openmelon",
+    "model_profile": "gpt-image-family",
+    "locale": "zh-CN",
+    "vars": {
+      "realism_level": "high",
+      "visual_evidence_density": "dense"
+    }
+  }
+}

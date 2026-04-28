@@ -1,0 +1,291 @@
+{
+  "project": {
+    "id": "demo-food-project",
+    "name": "Street Food Realism Demo",
+    "platform": "xiaohongshu",
+    "audience": "urban food explorers",
+    "persona": "ordinary after-work food explorer"
+  },
+  "workflow": "food_exploration",
+  "stage": "visual_concretization",
+  "intent": "下班后在老小区楼下吃一碗牛肉面，想发一条真实的探店帖",
+  "model_plan": {
+    "image_generator": {
+      "provider": "command",
+      "model": "gpt-image-2",
+      "role": "image artifact generation",
+      "command": "/home/wangzhi.wit/python/gpt_image_api_demo/.venv/bin/python /home/wangzhi.wit/python/gpt_image_api_demo/generate_image.py --provider oauth-tool --model {{model}} --output {{output}} {{prompt_json}}"
+    },
+    "planner": {
+      "provider": "openai-compatible",
+      "model": "gpt-4.1",
+      "role": "intent parsing and workflow planning",
+      "command": ""
+    },
+    "prompt_director": {
+      "provider": "skillplus-compiler",
+      "model": "food-street-realism.skillplus",
+      "role": "visual prompt concretization",
+      "command": ""
+    },
+    "reviewer": {
+      "provider": "openai-compatible",
+      "model": "gpt-4.1",
+      "role": "artifact review and label refinement",
+      "command": ""
+    }
+  },
+  "compiled_skill": {
+    "target": "openmelon",
+    "package": {
+      "id": "food-street-realism",
+      "version": "0.1.0",
+      "name": "Food Street Realism",
+      "kind": "visual_prompt_concretization"
+    },
+    "compiled_prompt": "# 街边烟火感探店\n\n目标：把一个美食探店意图具像化成像普通人真实到店、随手拍下来的社媒图片提示词。\n\n核心原则：\n\n- 不追求商业广告感。\n- 用具体视觉证据证明“我真的在这家店吃了”。\n- 保留普通手机照片的不完美。\n- 用环境、人、桌面痕迹、食物细节建立真实感。\n\n适合：\n\n- 街边面馆、粉店、砂锅、盖饭、小炒\n- 烧烤摊、大排档、夜宵店\n- 老字号小吃、地方特色小店\n- 老小区楼下餐馆、市场旁边小店\n\n\nYou are a visual prompt concretization skill for social food exploration content.\n\nGiven a content intent, produce a realistic image-generation prompt. Do not write a commercial food photography prompt. Convert abstract intent into observable visual facts:\n\n- camera position,\n- table objects,\n- shop environment,\n- background people,\n- food texture,\n- imperfections,\n- negative constraints.\n\nThe final image should feel like a phone snapshot from a real visit.\n\n\nFor GPT image-family models, use dense concrete visual evidence instead of abstract photography terms.\n\nPrefer:\n\n- phone snapshot,\n- ordinary shop lighting,\n- slightly tilted framing,\n- partial cropping,\n- table clutter,\n- visible menu/signage shapes,\n- people in the background,\n- food imperfections.\n\nAvoid:\n\n- cinematic,\n- magazine cover,\n- professional lighting,\n- shallow depth of field as a primary instruction,\n- perfect plating,\n- empty clean restaurants.\n",
+    "runtime_vars": {
+      "imperfection_level": "medium",
+      "locale": "zh-CN",
+      "model_profile": "gpt-image-family",
+      "platform": "xiaohongshu",
+      "realism_level": "high",
+      "visual_evidence_density": "dense"
+    },
+    "model_profile": "gpt-image-family",
+    "evaluation": {
+      "checklist": [
+        "The prompt defines a concrete camera position.",
+        "The prompt includes at least four visual evidence anchors.",
+        "The prompt includes ordinary environment details.",
+        "The prompt preserves natural imperfections.",
+        "The prompt avoids commercial food photography language.",
+        "The prompt describes food texture and table context.",
+        "The prompt includes failure-prevention negative rules."
+      ],
+      "failure_modes": [
+        "commercial_studio_look",
+        "cinematic_overpolish",
+        "perfect_empty_restaurant",
+        "food_without_environment_evidence",
+        "unrealistic_table_cleanliness",
+        "artificial_background_people",
+        "over_saturated_filter"
+      ]
+    },
+    "provenance_template": {
+      "compiled_output_hash": "0b17cd18ca9f5159a796435e9012200b537a98cfa721cc794d383ee2a7aa8fce",
+      "compiler": {
+        "name": "skillplus-reference-compiler",
+        "version": "0.1.0"
+      },
+      "locale": "zh-CN",
+      "model_profile": "gpt-image-family",
+      "package": {
+        "id": "food-street-realism",
+        "source_hash": "5e04d330978dbb5fedcd39b1cff0440682f98f139a3b60b785f2e0b608ac4206",
+        "version": "0.1.0"
+      },
+      "runtime_vars": {
+        "imperfection_level": "medium",
+        "locale": "zh-CN",
+        "model_profile": "gpt-image-family",
+        "platform": "xiaohongshu",
+        "realism_level": "high",
+        "visual_evidence_density": "dense"
+      },
+      "target": "openmelon"
+    },
+    "lifecycle": {
+      "after": [
+        "image_generation",
+        "visual_quality_review"
+      ],
+      "before": [
+        "content_intent_planning"
+      ],
+      "stage": "visual_prompt_concretization"
+    },
+    "stage_contract": {
+      "agent_roles": [
+        "openmelon.image_prompt_director",
+        "openmelon.content_director"
+      ],
+      "inputs": {
+        "content_intent": "string",
+        "platform": "string",
+        "previous_feedback": "object",
+        "project_memory": "object"
+      },
+      "outputs": {
+        "expected_visual_signals": "array",
+        "failure_modes": "array",
+        "generation_prompt": "string",
+        "negative_rules": "array",
+        "scene_interpretation": "object"
+      },
+      "quality_signals": [
+        "camera_position_defined",
+        "four_or_more_visual_evidence_items",
+        "natural_imperfections_present",
+        "avoids_commercial_food_photography"
+      ],
+      "stage": "visual_prompt_concretization"
+    },
+    "output_schema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "evaluation_checklist": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "expected_visual_signals": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "failure_modes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "generation_prompt": {
+          "type": "string"
+        },
+        "negative_rules": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "scene_interpretation": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "scene_interpretation",
+        "generation_prompt",
+        "evaluation_checklist"
+      ],
+      "title": "Food Street Realism Output",
+      "type": "object"
+    }
+  },
+  "artifacts": [
+    {
+      "id": "ce1bd0ef1664d064",
+      "type": "image_prompt",
+      "content": "手机随手拍的一张社媒探店照片，晚上九点半，在老小区楼下的一家普通牛肉面小店。一碗刚端上来的牛肉面放在有点发亮的塑料桌布上，拍摄者像是刚下班坐在靠墙小桌前，从胸口高度往下随手拍。画面里能看到一串钥匙、半瓶冰红茶、拆开的一次性筷子塑料膜、皱掉的纸巾、桌角贴着的点菜单。背景里有墙上褪色的菜单和后厨老板模糊的身影，旁边隐约有其他客人。牛肉面上有辣油、葱花、几片牛肉，碗边有一点汤汁溅出来，热气轻微往上冒。构图略微不正，碗不要完全居中，画面边缘可以裁掉一点饮料瓶，灯光是普通小店偏黄的顶灯，局部有一点过曝。整体像手机自动曝光的生活记录，不要商业摄影，不要电影感，不要精致摆盘，不要高级滤镜，不要文字水印。",
+      "model": "food-street-realism.skillplus",
+      "labels": {
+        "artifact_type": "image_prompt",
+        "content_vertical": "food_exploration",
+        "model_profile": "gpt-image-family",
+        "platform": "xiaohongshu",
+        "skillplus_package": "food-street-realism",
+        "skillplus_version": "0.1.0",
+        "workflow_stage": "visual_concretization"
+      }
+    },
+    {
+      "id": "7a1d6b1a39fb3797",
+      "type": "image",
+      "content": "generated image artifact",
+      "uri": "examples/food-exploration/artifacts/60074c5f7e1fb0ef.png",
+      "model": "gpt-image-2",
+      "labels": {
+        "artifact_type": "image",
+        "content_vertical": "food_exploration",
+        "model_profile": "gpt-image-family",
+        "platform": "xiaohongshu",
+        "skillplus_package": "food-street-realism",
+        "skillplus_version": "0.1.0",
+        "workflow_stage": "visual_concretization"
+      }
+    }
+  ],
+  "labels": {
+    "artifact_type": "image_prompt",
+    "content_vertical": "food_exploration",
+    "model_profile": "gpt-image-family",
+    "platform": "xiaohongshu",
+    "skillplus_package": "food-street-realism",
+    "skillplus_version": "0.1.0",
+    "workflow_stage": "visual_concretization"
+  },
+  "provenance": {
+    "project_id": "demo-food-project",
+    "workflow": "food_exploration",
+    "stage": "visual_concretization",
+    "skill_package": {
+      "id": "food-street-realism",
+      "version": "0.1.0",
+      "name": "Food Street Realism",
+      "kind": "visual_prompt_concretization"
+    },
+    "compiled_target": "openmelon",
+    "model_profile": "gpt-image-family",
+    "runtime_vars": {
+      "imperfection_level": "medium",
+      "locale": "zh-CN",
+      "model_profile": "gpt-image-family",
+      "platform": "xiaohongshu",
+      "realism_level": "high",
+      "visual_evidence_density": "dense"
+    },
+    "prompt_hash": "60074c5f7e1fb0ef",
+    "generation": {
+      "provider": "command",
+      "model": "gpt-image-2",
+      "command": "/home/wangzhi.wit/python/gpt_image_api_demo/.venv/bin/python /home/wangzhi.wit/python/gpt_image_api_demo/generate_image.py --provider oauth-tool --model gpt-image-2 --output examples/food-exploration/artifacts/60074c5f7e1fb0ef.png '手机随手拍的一张社媒探店照片，晚上九点半，在老小区楼下的一家普通牛肉面小店。一碗刚端上来的牛肉面放在有点发亮的塑料桌布上，拍摄者像是刚下班坐在靠墙小桌前，从胸口高度往下随手拍。画面里能看到一串钥匙、半瓶冰红茶、拆开的一次性筷子塑料膜、皱掉的纸巾、桌角贴着的点菜单。背景里有墙上褪色的菜单和后厨老板模糊的身影，旁边隐约有其他客人。牛肉面上有辣油、葱花、几片牛肉，碗边有一点汤汁溅出来，热气轻微往上冒。构图略微不正，碗不要完全居中，画面边缘可以裁掉一点饮料瓶，灯光是普通小店偏黄的顶灯，局部有一点过曝。整体像手机自动曝光的生活记录，不要商业摄影，不要电影感，不要精致摆盘，不要高级滤镜，不要文字水印。'",
+      "output": "examples/food-exploration/artifacts/60074c5f7e1fb0ef.png"
+    },
+    "source": {
+      "compiled_output_hash": "0b17cd18ca9f5159a796435e9012200b537a98cfa721cc794d383ee2a7aa8fce",
+      "compiler": {
+        "name": "skillplus-reference-compiler",
+        "version": "0.1.0"
+      },
+      "locale": "zh-CN",
+      "model_profile": "gpt-image-family",
+      "package": {
+        "id": "food-street-realism",
+        "source_hash": "5e04d330978dbb5fedcd39b1cff0440682f98f139a3b60b785f2e0b608ac4206",
+        "version": "0.1.0"
+      },
+      "runtime_vars": {
+        "imperfection_level": "medium",
+        "locale": "zh-CN",
+        "model_profile": "gpt-image-family",
+        "platform": "xiaohongshu",
+        "realism_level": "high",
+        "visual_evidence_density": "dense"
+      },
+      "target": "openmelon"
+    }
+  },
+  "review": {
+    "checklist": [
+      "The prompt defines a concrete camera position.",
+      "The prompt includes at least four visual evidence anchors.",
+      "The prompt includes ordinary environment details.",
+      "The prompt preserves natural imperfections.",
+      "The prompt avoids commercial food photography language.",
+      "The prompt describes food texture and table context.",
+      "The prompt includes failure-prevention negative rules."
+    ],
+    "failure_modes": [
+      "commercial_studio_look",
+      "cinematic_overpolish",
+      "perfect_empty_restaurant",
+      "food_without_environment_evidence",
+      "unrealistic_table_cleanliness",
+      "artificial_background_people",
+      "over_saturated_filter"
+    ]
+  }
+}

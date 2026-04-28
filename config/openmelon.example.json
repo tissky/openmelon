@@ -1,0 +1,31 @@
+{
+  "models": {
+    "planner": {
+      "provider": "openai-compatible",
+      "model": "gpt-4.1",
+      "role": "intent parsing and workflow planning"
+    },
+    "prompt_director": {
+      "provider": "skillplus-compiler",
+      "model": "food-street-realism.skillplus",
+      "role": "visual prompt concretization"
+    },
+    "image_generator": {
+      "provider": "command",
+      "model": "gpt-image-2",
+      "role": "image artifact generation",
+      "command": "python3 ../gpt_image_api_demo/generate_image.py --provider oauth-tool --model {{model}} --output {{output}} {{prompt_json}}"
+    },
+    "reviewer": {
+      "provider": "openai-compatible",
+      "model": "gpt-4.1",
+      "role": "artifact review and label refinement"
+    }
+  },
+  "routing": {
+    "intent_planning": "planner",
+    "visual_concretization": "prompt_director",
+    "image_generation": "image_generator",
+    "visual_quality_review": "reviewer"
+  }
+}

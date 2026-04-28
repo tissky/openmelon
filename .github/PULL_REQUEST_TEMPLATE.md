@@ -6,10 +6,11 @@ Describe what this pull request changes and why.
 
 - [ ] Docs
 - [ ] Bug fix
-- [ ] Engine change
-- [ ] Dispatcher change
-- [ ] Registry change
-- [ ] Runtime / sandbox change
+- [ ] Workflow change
+- [ ] Project memory change
+- [ ] Artifact / provenance change
+- [ ] Skill-Plus integration change
+- [ ] Runtime change
 - [ ] Security fix
 - [ ] Dependency change
 
@@ -27,7 +28,7 @@ Describe what this pull request changes and why.
 
 - [ ] This is not a breaking change.
 - [ ] This is a breaking change and has an accepted RFC.
-- [ ] This changes dispatcher semantics, registry validation, runtime contract, sandbox behavior, or B-face output behavior.
+- [ ] This changes workflow semantics, artifact contracts, provenance, labeling, or Skill-Plus integration behavior.
 
 ## Security / Privacy
 

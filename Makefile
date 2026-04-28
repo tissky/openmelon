@@ -1,20 +1,16 @@
-.PHONY: build test lint clean help
+.PHONY: build test clean help
 
 build:
-	go build -o skillplus-engine ./cmd/skillplus-engine/
+	go build -o openmelon ./cmd/openmelon/
 
 test:
 	go test ./...
 
-lint:
-	golangci-lint run ./...
-
 clean:
-	rm -f skillplus-engine
+	rm -f openmelon
 
 help:
 	@echo "Available targets:"
-	@echo "  build   - Build the engine binary"
+	@echo "  build   - Build the OpenMelon CLI"
 	@echo "  test    - Run all tests"
-	@echo "  lint    - Run linter"
 	@echo "  clean   - Remove build artifacts"

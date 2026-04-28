@@ -5,7 +5,11 @@
 *.so
 *.dylib
 /vendor/
-/skillplus-engine
+/openmelon
+
+# Local config
+openmelon.config.json
+config/openmelon.local.json
 
 # IDE
 .idea/

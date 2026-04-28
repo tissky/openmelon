@@ -14,20 +14,19 @@ Maintainers will acknowledge valid security reports as soon as practical, invest
 
 Changes touching the following areas require security review before merge:
 
-- Sandbox isolation behavior.
 - Runtime execution behavior.
 - Network access and egress allowlists.
 - File system persistence or temporary file cleanup.
 - Secret handling, credentials, tokens, or authentication material.
 - Dependencies with native code or unknown licensing.
-- External API access from built-in plugins or integrations.
-- B-face sanitization and output size enforcement.
-- Timeout, memory, process, or output-cap enforcement.
+- External API access from generation adapters or integrations.
+- Project memory retention or user data persistence.
+- Artifact provenance and label handling for private content.
 - Any use of shell execution or process spawning.
 
 ## Supported Scope
 
-This policy applies to the Skill-Plus Engine, dispatcher, registry loading, sandbox abstraction, Python runtime, built-in plugins, host integration examples, and repository automation.
+This policy applies to the OpenMelon content-production runtime, workflow orchestration, project memory, artifact management, provenance, labeling, Skill-Plus integration, examples, and repository automation.
 
 ## Contributor Responsibility
 

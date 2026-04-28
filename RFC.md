@@ -1,6 +1,6 @@
 # RFC Process
 
-RFCs are required for changes that affect Skill-Plus Engine compatibility, runtime guarantees, sandbox guarantees, or community governance.
+RFCs are required for changes that affect OpenMelon workflow semantics, artifact contracts, provenance, labeling, Skill-Plus integration, runtime guarantees, or community governance.
 
 ## Lifecycle
 
@@ -10,14 +10,13 @@ draft -> review -> accepted -> implemented -> obsolete
 
 ## Changes That Require an RFC
 
-- Changes to dispatcher matching semantics.
-- Changes to registry manifest loading or validation semantics.
-- Changes to runtime contract expectations.
-- Changes to sandbox security model assumptions.
-- Changes to B-face output contract expectations.
-- Changes to timeout, memory, process, or output-cap guarantees.
-- Adding a new runtime type.
-- Breaking changes to integration contracts.
+- Changes to workflow stage semantics.
+- Changes to project memory contracts.
+- Changes to artifact or provenance schemas.
+- Changes to content labeling semantics.
+- Changes to Skill-Plus compilation or runtime integration.
+- Adding a new runtime execution mode.
+- Breaking changes to public contracts.
 - Changes to license, CLA, or governance policy.
 
 ## Changes That Usually Do Not Require an RFC
@@ -25,7 +24,7 @@ draft -> review -> accepted -> implemented -> obsolete
 - Typo fixes.
 - Documentation clarifications that do not change semantics.
 - Bug fixes that preserve compatibility.
-- Internal refactors that do not change runtime, sandbox, dispatcher, registry, or B-face behavior.
+- Internal refactors that do not change public workflow, artifact, provenance, labeling, or integration behavior.
 
 ## RFC Template
 
@@ -38,7 +37,7 @@ draft -> review -> accepted -> implemented -> obsolete
 
 ## Detailed Design
 
-## Compatibility
+## Workflow / Artifact Impact
 
 ## Security / Privacy Impact
 
@@ -51,4 +50,4 @@ draft -> review -> accepted -> implemented -> obsolete
 
 ## Approval
 
-An RFC is accepted when the relevant maintainers and approvers agree that the design is clear, compatible with project goals, and has an acceptable migration and rollback plan.
+An RFC is accepted when the relevant maintainers and approvers agree that the design is clear, compatible with OpenMelon's content-production goals, and has an acceptable migration and rollback plan.

@@ -1,92 +1,79 @@
-# Skill-Plus Engine
+# OpenMelon
 
-**The execution engine for Skill-Plus — runs Skills in sandboxed environments and produces A/B-face content.**
+**A content-creation agent runtime for reproducible multimodal production.**
 
-> Created by [Point Eight AI](https://pointeight.ai) — integrated into [V-Box](https://vboxes.org)'s posting pipeline.
+OpenMelon is an AI-era DaVinci: a professional runtime for planning, generating, reviewing, labeling, and iterating content across text, image, audio, and video.
 
-## What is Skill-Plus Engine?
+It is not a general-purpose agent framework. It is built for content creation.
 
-Skill-Plus Engine takes user-created content (A-face) and runs matching Skills against it to produce structured Agent-facing metadata (B-face). Every post in V-Box generates two layers of representation:
+## Why OpenMelon
 
-- **A-face (Human-facing)** — Original text, images, video. What humans see in their feed.
-- **B-face (Agent-facing)** — Structured metadata: visual descriptions, entities, topics, sentiment, RAG anchors, Agent interaction prompts. What AI Agents consume.
+Modern generative models are powerful, but creative production still feels unstable:
 
-```
-         ┌── Same Post ──┐
-         │               │
-         ▼               ▼
-       A-face          B-face
-    (Human feed)    (Agent context)
-     Raw content     Semantic metadata
-    Like / Save     Ingest / RAG
-```
+- prompts drift between runs,
+- visual style is hard to preserve,
+- creator and project memory are not consistently applied,
+- generated assets lack production provenance,
+- feedback is hard to convert into better future outputs,
+- content workflows are often one-shot prompts instead of durable pipelines.
 
-## Architecture
+OpenMelon treats content generation as a production process:
 
-```
-├── engine/                  # Core execution engine (Go)
-├── dispatcher/              # Skill dispatch based on skill.yaml hints
-├── sandbox/                 # gVisor sandboxed isolation
-├── runtime-python/          # Python Skill runner
-├── plugins-builtin/         # Official built-in Skill plugins
-└── integration/             # Reference integration for host systems
+```text
+Project -> Workflow -> Stage -> Skill-Plus Package -> Compiled Skill -> Generation -> Artifact -> Review -> Labels/Provenance -> Memory Update
 ```
 
-## Build & Run
+## Core Responsibilities
 
-```bash
-# Build
-make build
+OpenMelon manages:
 
-# Run tests
-make test
+- projects and creative briefs,
+- long-term project memory,
+- creator, character, and persona consistency,
+- content vertical workflows,
+- copy, image, audio, and video production stages,
+- prompt, shot, and script enhancement,
+- artifact labeling and provenance,
+- evaluation and feedback loops,
+- Skill-Plus package compilation and execution.
 
-# Run with config
-./skillplus-engine -config config.yaml
+## Relationship to Skill-Plus
+
+Skill-Plus was extracted from OpenMelon's production needs.
+
+OpenMelon needs stable reusable content capabilities. Skill-Plus provides those capabilities as compilable packages.
+
+```text
+OpenMelon  = content-production runtime
+Skill-Plus = compilable skill package standard and open ecosystem
 ```
 
-## MVP Local Run
+OpenMelon compiles Skill-Plus packages into workflow-ready skills, executes them in the right stage, and attaches provenance to every generated artifact.
 
-The MVP engine can load local Skill-Plus skills from the sibling `skillplus` repository and process text into B-face JSON.
+## Model Configuration
 
-```bash
-make test
-go run ./cmd/skillplus-engine -skills ../skillplus/skills -text '你好 @berry #测试'
+OpenMelon is model-driven. Different workflow stages can route to different models or providers:
+
+```text
+intent_planning          -> planner model
+visual_concretization    -> Skill-Plus compiler / prompt director
+image_generation         -> image generation model
+audio_generation         -> audio model
+visual_quality_review    -> reviewer model
 ```
 
-The command loads `skill.yaml` manifests, dispatches matching text skills, executes them as local child processes, and prints aggregated B-face JSON.
+See `config/openmelon.example.json` for the current configuration shape. The first runnable example uses a command provider for image generation so OpenMelon can produce a real image artifact while recording the model, command, prompt hash, labels, and provenance.
 
-Current MVP limitations:
+## Repository Layout
 
-- Python and Go skills run directly as local processes.
-- TypeScript skills require a prebuilt `main.js` entrypoint.
-- gVisor sandboxing is not included in the MVP.
-- HTTP serving and remote registry sync are not included in the MVP.
-
-## Pipeline Flow
-
-```
-Content Input (A-face)
-    │
-    ├─ Dispatcher selects matching Skills (via dispatch_hints)
-    ├─ Skills run concurrently in sandboxed environments
-    ├─ Results aggregated into B-face JSON
-    │
-    └─ B-face persisted alongside A-face
+```text
+├── docs/                 # Design docs for content-agent workflows
+├── cmd/openmelon/        # CLI entrypoint
+├── internal/             # Runtime implementation packages
+├── pkg/                  # Public contracts
+└── examples/             # End-to-end content workflow examples
 ```
 
-## Security
+## Status
 
-- Python Skills run in gVisor containers with network egress allowlists
-- Go Skills compiled natively; `unsafe` / `os/exec` prohibited
-- Per-skill timeout enforcement (text: 15s, image: 30s, video: 90s)
-- Memory hard cap (default 512MB per skill)
-- Output hard cap (8KB per skill, 32KB total B-face)
-- Static analysis rejects `eval`, `exec`, `os.system`, `subprocess` without declared reason
-- B-face sanitized: no active HTML/JavaScript
-
-## License
-
-Apache 2.0 — see [LICENSE](./LICENSE).
-
-Copyright 2026 Point Eight AI Pte. Ltd.
+OpenMelon is being rebuilt around the content-production runtime model. Current code is a skeleton for the new architecture.
