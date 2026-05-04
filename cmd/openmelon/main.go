@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/Jackyffight/openmelon/internal/generation"
-	"github.com/Jackyffight/openmelon/internal/project"
-	"github.com/Jackyffight/openmelon/internal/skillplus"
-	"github.com/Jackyffight/openmelon/internal/workflow"
+	"github.com/eight-acres-lab/openmelon/internal/generation"
+	"github.com/eight-acres-lab/openmelon/internal/project"
+	"github.com/eight-acres-lab/openmelon/internal/skillplus"
+	"github.com/eight-acres-lab/openmelon/internal/workflow"
 )
 
 func main() {

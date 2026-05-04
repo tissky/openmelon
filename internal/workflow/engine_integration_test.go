@@ -10,11 +10,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Jackyffight/openmelon/internal/generation"
-	"github.com/Jackyffight/openmelon/internal/project"
-	"github.com/Jackyffight/openmelon/internal/provenance"
-	"github.com/Jackyffight/openmelon/internal/skillplus"
-	"github.com/Jackyffight/openmelon/internal/workflow"
+	"github.com/eight-acres-lab/openmelon/internal/generation"
+	"github.com/eight-acres-lab/openmelon/internal/project"
+	"github.com/eight-acres-lab/openmelon/internal/provenance"
+	"github.com/eight-acres-lab/openmelon/internal/skillplus"
+	"github.com/eight-acres-lab/openmelon/internal/workflow"
 )
 
 // TestEngine_runEndToEnd runs the engine with:

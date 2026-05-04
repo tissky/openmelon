@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Jackyffight/openmelon/internal/project"
-	"github.com/Jackyffight/openmelon/internal/skillplus"
+	"github.com/eight-acres-lab/openmelon/internal/project"
+	"github.com/eight-acres-lab/openmelon/internal/skillplus"
 )
 
 // fakeCompiledSkillJSON is a valid Python compiler output for unit tests.
