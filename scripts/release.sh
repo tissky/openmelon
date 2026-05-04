@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Release a new openmelon version.
 #
-#   ./scripts/release.sh v0.2.0       # tag + build + GitHub release
+#   ./scripts/release.sh v0.2.0       # tag + build + GitHub release + npm publish
 #   ./scripts/release.sh v0.2.0 --dry-run
 #
 # Refuses to run with an unclean working tree. Builds darwin/linux ×
-# amd64/arm64 binaries with the version baked in via -ldflags.
+# amd64/arm64 binaries with the version baked in via -ldflags. Bumps
+# npm/package.json so @e8s/openmelon's postinstall fetches binaries
+# from the matching GitHub Release.
 
 set -euo pipefail
 
@@ -23,6 +25,8 @@ if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-z0-9.]+)?$ ]]; then
   echo "version must look like v0.2.0 or v0.2.0-rc1, got: $VERSION" >&2
   exit 2
 fi
+
+NPM_VERSION="${VERSION#v}"   # 0.2.0 (no v prefix for npm)
 
 if [[ -n "$(git status --porcelain)" ]]; then
   echo "working tree is dirty; commit or stash first" >&2
@@ -64,14 +68,24 @@ build_one linux  arm64
 echo "==> built artifacts:"
 ls -lh "$DIST"
 
+echo "==> bumping npm/package.json to $NPM_VERSION"
+(cd "$ROOT/npm" && npm version "$NPM_VERSION" --no-git-tag-version --allow-same-version > /dev/null)
+
 if [[ -n "$DRY_RUN" ]]; then
-  echo "==> --dry-run; stopping before tag + release"
+  echo "==> --dry-run: showing what npm would publish"
+  (cd "$ROOT/npm" && npm publish --dry-run --access public)
+  echo "==> --dry-run; reverting npm bump and stopping before tag + release"
+  (cd "$ROOT/npm" && git checkout -- package.json)
   exit 0
 fi
 
+echo "==> committing npm version bump"
+git add npm/package.json
+git commit -s -m "chore: release $VERSION"
+
 echo "==> tagging $VERSION"
 git tag -a "$VERSION" -m "Release $VERSION"
-git push origin "$VERSION"
+git push origin main "$VERSION"
 
 echo "==> creating GitHub release"
 gh release create "$VERSION" \
@@ -80,4 +94,10 @@ gh release create "$VERSION" \
   "$DIST"/openmelon-* \
   "$DIST"/SHASUMS256.txt
 
-echo "==> done. release: https://github.com/eight-acres-lab/openmelon/releases/tag/$VERSION"
+echo "==> npm publish (@e8s/openmelon@$NPM_VERSION)"
+(cd "$ROOT/npm" && npm publish --access public)
+
+echo ""
+echo "==> done."
+echo "    GitHub: https://github.com/eight-acres-lab/openmelon/releases/tag/$VERSION"
+echo "    npm:    https://www.npmjs.com/package/@e8s/openmelon/v/$NPM_VERSION"

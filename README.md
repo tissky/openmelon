@@ -15,16 +15,21 @@ openmelon -p "下班吃一碗牛肉面，发条真实的探店帖" \
 
 ## Install
 
-From source (Go 1.22+):
+```bash
+npm install -g @e8s/openmelon @e8s/skillplus
+```
+
+`@e8s/openmelon` is a Node shim that fetches the matching Go binary from GitHub Releases on install (verified against `SHASUMS256.txt`). To build from source instead:
 
 ```bash
 go install github.com/eight-acres-lab/openmelon/cmd/openmelon@latest
 ```
 
-You'll also need:
+For `--publish vbox`, also:
 
-- [`skillplus`](https://github.com/eight-acres-lab/skillplus) — `pip install skillplus`
-- [`vbox-cli`](https://github.com/eight-acres-lab/vbox-cli) — `npm i -g @e8s/vbox-cli` (only for `--publish vbox`)
+```bash
+npm install -g @e8s/vbox-cli
+```
 
 ## Authentication
 

@@ -21,7 +21,7 @@ internal/
   agent/              # one-shot orchestration: skill → LLM → image → artifact
   llm/                # pluggable LLM clients (Anthropic, OpenAI, OpenRouter) + SSE
   imagegen/           # pluggable image generators (OpenAI, OpenRouter)
-  skillplus/          # subprocess wrapper to the Python skillplus compiler
+  skillplus/          # subprocess wrapper to the `skillplus` console script
   artifacts/          # artifact write helper
   provenance/         # provenance JSONL append helper
   project/            # legacy 0.1 project.json loader
@@ -31,6 +31,7 @@ internal/
 pkg/
   contracts/          # public Go types
   openmelon/          # public Go API for embedding
+npm/                  # @e8s/openmelon Node distribution (downloads the binary)
 examples/
   food-exploration/   # legacy 0.1 declarative example
   integrations/       # Skill files for Claude Code, Cursor
