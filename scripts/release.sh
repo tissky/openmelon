@@ -79,9 +79,13 @@ if [[ -n "$DRY_RUN" ]]; then
   exit 0
 fi
 
-echo "==> committing npm version bump"
+echo "==> committing npm version bump (if needed)"
 git add npm/package.json
-git commit -s -m "chore: release $VERSION"
+if git diff --cached --quiet; then
+  echo "    (no version-bump changes — npm/package.json already at $NPM_VERSION)"
+else
+  git commit -s -m "chore: release $VERSION"
+fi
 
 echo "==> tagging $VERSION"
 git tag -a "$VERSION" -m "Release $VERSION"
