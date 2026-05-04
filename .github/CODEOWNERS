@@ -8,16 +8,19 @@
 
 /cmd/                    @eight-acres-lab/core
 /internal/workflow/      @eight-acres-lab/core
-/internal/memory/        @eight-acres-lab/core
 /internal/artifacts/     @eight-acres-lab/core
+/internal/generation/    @eight-acres-lab/core
+/internal/project/       @eight-acres-lab/core
 /internal/provenance/    @eight-acres-lab/core
-/internal/labeling/      @eight-acres-lab/core
 /internal/skillplus/     @eight-acres-lab/core
 /pkg/contracts/          @eight-acres-lab/core
 /pkg/openmelon/          @eight-acres-lab/core
+/config/                 @eight-acres-lab/core
 /docs/                   @eight-acres-lab/core
 /examples/               @eight-acres-lab/core
 /.github/                @eight-acres-lab/core
+/go.mod                  @eight-acres-lab/core
+/Makefile                @eight-acres-lab/core
 /CODE_OF_CONDUCT.md      @eight-acres-lab/core
 /SECURITY.md             @eight-acres-lab/core
 /GOVERNANCE.md           @eight-acres-lab/core

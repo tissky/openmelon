@@ -1,38 +1,82 @@
 # Roadmap
 
-## Phase 0 — Foundation
+OpenMelon is being built around three deliverables:
+- a **standalone agent CLI** (like Claude Code, but for content creation),
+- an **MCP server / Skill** so other agents can delegate to it,
+- an **embeddable Go library** so V-Box's backend can use it as its content-analysis and distribution engine.
 
-- Establish OpenMelon as a content-production agent runtime.
-- Define workflow, artifact, provenance, labeling, and memory as core concepts.
+Versions below frame those deliverables in shipping order.
 
-## Phase 1 — Core Contracts
+## 0.1 (current) — Workflow engine baseline
 
-- Define project, workflow, stage, artifact, provenance, and label contracts.
-- Define Skill-Plus integration interfaces.
-- Add food exploration as the first reference workflow.
+What works:
 
-## Phase 2 — Runtime Skeleton
+- `project.json` loader with validation (`internal/project`).
+- Workflow + stage execution engine (`internal/workflow`).
+- Skill-Plus compiler subprocess adapter (`internal/skillplus`).
+- Pluggable generation provider with a `CommandProvider` for shell-based generation (`internal/generation`).
+- Artifact write + JSONL provenance append.
+- Working end-to-end example: `examples/food-exploration/`.
 
-- Implement project loading.
-- Implement workflow execution skeleton.
-- Implement artifact and provenance recording.
-- Implement Skill-Plus package compilation adapter.
+Module path is `github.com/eight-acres-lab/openmelon`. Tests pass on Go 1.22+. No release tag yet.
 
-## Phase 3 — Content Workflows
+## 0.2 — Agent loop + builtin tools + standalone CLI
 
-- Food exploration image workflow.
-- Social copywriting workflow.
-- Visual prompt concretization workflow.
-- Image review and feedback workflow.
+The major shape change. After 0.2, you don't write `project.json` — you talk to the agent.
 
-## Phase 4 — Multimodal Production
+- `internal/agent/` — multi-turn agent loop with streaming output and tool calling.
+- Pluggable model client interface (`internal/clients/`) with first-party implementations:
+  - `anthropic` (Claude family)
+  - `openai` (GPT family)
+  - `google` (Gemini family)
+  - `openrouter` (multi-vendor proxy)
+  Selection is config-driven; OpenMelon doesn't hard-code a vendor.
+- `internal/tools/` — builtin tool catalog the agent can call:
+  - `vbox.post`, `vbox.reply`, `vbox.upload` — shell out to `vbox-cli`
+  - `skillplus.compile` — shell out to `skillplus`
+  - `image.generate`, `web.fetch`, `fs.read`, `fs.write`
+- `cmd/openmelon` subcommands:
+  - `openmelon -p "<intent>"` — one-shot, like `claude -p`
+  - `openmelon` (no args) — interactive REPL
+- A bare-minimum `internal/memory` (JSONL on disk) so the agent can carry session state without re-introducing the deleted skeleton modules.
+- First release: `v0.2.0` tag → `go install github.com/eight-acres-lab/openmelon/cmd/openmelon@v0.2.0`.
 
-- Audio script and voice workflows.
-- Video shot-list and storyboard workflows.
-- Cross-modal artifact linking.
+## 0.3 — Sub-agent / MCP integration
 
-## Phase 5 — Ecosystem
+Make OpenMelon callable by other agents.
 
-- Run community Skill-Plus packages.
-- Attach production labels to all outputs.
-- Support standalone and sub-agent modes.
+- `cmd/openmelon mcp` — MCP server mode exposing the agent loop and tool catalog over MCP.
+- `skills/` directory with Claude Code-compatible Skill files that wrap `openmelon -p`. One-line install in Claude Code: `cp openmelon/skills/*.md ~/.claude/skills/`.
+- `examples/integrations/` for cursor-mcp, codex, claude-code-skill end-to-end setup walkthroughs.
+- `cmd/openmelon serve` — HTTP API mode for V-Box backend embedding (in addition to direct Go import).
+
+## 0.4 — Memory, labeling, review, planner come back as real modules
+
+The skeleton modules deleted in 0.1 return as actual implementations once the 0.2/0.3 agent loop has informed what the real interfaces should be.
+
+- `internal/memory` — long-term project memory (vector + structured).
+- `internal/labeling` — artifact labeling pipeline.
+- `internal/review` — human-in-the-loop and automatic review.
+- `internal/planner` — multi-step plan synthesis for complex briefs.
+- `internal/roles` — persona / character / creator role enforcement across stages.
+
+These are deferred deliberately: writing them before the agent loop locks in interfaces produces hollow code (which is exactly what 0.1 had to delete).
+
+## 0.5 — Multimodal production
+
+- Audio: TTS workflows, podcast scripts, interview transcripts.
+- Video: shot lists, storyboards, edit decision lists.
+- Cross-modal artifact linking + per-modality review.
+
+## 1.0 — Stable
+
+- Public Go API surface frozen for embedded use.
+- MCP tool catalog + Skill format frozen.
+- CLI flags, config schema, and provenance schema frozen.
+- Long-term support policy and deprecation timeline.
+
+## Out of scope
+
+- General-purpose agent framework. OpenMelon is for content creation; if you need a generic agent loop, use Claude Code / OpenAI Agents / etc.
+- Hosted SaaS. OpenMelon is self-hosted by design — it lives next to your model credentials.
+- A specific model vendor lock-in. Vendor selection is always user-configured.
