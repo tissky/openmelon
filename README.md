@@ -27,28 +27,61 @@ go run ./cmd/openmelon \
 
 That produces a JSON artifact under `artifacts/` plus a provenance JSONL line.
 
-## What 0.2 will feel like
+## Agent mode (0.2-dev)
 
 ```bash
-# install (after 0.2 release)
-go install github.com/eight-acres-lab/openmelon/cmd/openmelon@latest
+go build -o openmelon ./cmd/openmelon
 
-# one-shot
+# one-shot — picks an LLM provider automatically based on which
+# *_API_KEY you have set
 openmelon -p "Singapore 牛车水夜市的食物街快闪贴" \
-  --skill skillplus:food-street-realism \
-  --publish vbox
+  --skill skillplus:food-street-realism
 
-# interactive
-openmelon
-
-# MCP mode (for Claude Code / Cursor / etc.)
-openmelon mcp
-
-# HTTP mode (for V-Box backend)
-openmelon serve --port 7842
+# with everything wired through to V-Box
+openmelon -p "..." --skill skillplus:food-street-realism --publish vbox
 ```
 
-The agent loop will route per-stage to a configurable model client (Anthropic / OpenAI / Google / OpenRouter — whatever the user has credentials for; OpenMelon does not pick for you).
+### Model providers
+
+The structuring step (intent + skill → structured generation prompt) and the image generation step are each pluggable. By default, OpenMelon picks based on which API keys it finds in your environment.
+
+**One-key paths** — pick whichever you have:
+
+```bash
+# OpenAI only — LLM via gpt-5, image via gpt-image-1
+export OPENAI_API_KEY=sk-...
+openmelon -p "..."           # --llm defaults to "auto" → openai
+
+# Anthropic only — LLM via claude-sonnet-4-6, image still via OpenAI
+# (Claude doesn't generate images; pass --image=false to skip image gen)
+export ANTHROPIC_API_KEY=sk-ant-...
+openmelon -p "..." --image=false
+
+# Both — Anthropic wins for the LLM step (best at structured JSON);
+# OpenAI handles image gen
+export ANTHROPIC_API_KEY=sk-ant-...
+export OPENAI_API_KEY=sk-...
+openmelon -p "..."
+```
+
+**OpenAI-compatible relays / proxies** — set `OPENAI_BASE_URL` (host only, no `/v1`):
+
+```bash
+# LiteLLM, Helicone, ChatGPT-Plus relay services, vLLM, LM Studio,
+# any OpenAI-compatible endpoint
+export OPENAI_API_KEY=...
+export OPENAI_BASE_URL=https://your-relay.example.com
+openmelon -p "..."           # both LLM and image hit your relay
+```
+
+The same flag exists per-step for finer control: `--llm-base-url` and `--image-base-url`. OpenRouter is a first-party LLM provider (`--llm openrouter` / `OPENROUTER_API_KEY`) for cross-vendor routing.
+
+### Coming in 0.3
+
+- `openmelon` (no args) — interactive REPL
+- `openmelon mcp` — MCP server, so Claude Code / Cursor can register OpenMelon as a sub-agent
+- `openmelon serve` — HTTP API for V-Box backend embedding
+- TUI scene picker (the food-street-realism schema produces multiple `scene_interpretation` candidates; today the agent runs one)
 
 ## Architecture (today)
 

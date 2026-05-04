@@ -33,20 +33,40 @@ type OpenAIClient struct {
 	httpClient   *http.Client
 }
 
-// NewOpenAI builds an OpenAIClient against the official OpenAI API.
+// NewOpenAI builds an OpenAIClient against the official OpenAI API
+// (or any OpenAI-compatible endpoint).
 //
-// apiKey: explicit key, or "" to read OPENAI_API_KEY from env.
-// defaultModel: empty → gpt-5 (the current default; override per-call via
-// CompleteOptions.Model).
-func NewOpenAI(apiKey, defaultModel string) (*OpenAIClient, error) {
-	return newOpenAILike("openai", apiKey, "OPENAI_API_KEY", openaiDefaultBaseURL, defaultModel, openaiDefaultModel)
+// Env-var fallbacks (only used when the matching argument is ""):
+//   - apiKey ← OPENAI_API_KEY
+//   - baseURL ← OPENAI_BASE_URL  (e.g. https://api.openai.com — host only,
+//     no /v1 suffix; matches the convention used by the official OpenAI
+//     SDKs and most relays). Useful for ChatGPT-Plus relays, LiteLLM,
+//     Helicone, vLLM, LM Studio, or any other OpenAI-compatible host.
+//
+// defaultModel: empty → gpt-5 (override per-call via CompleteOptions.Model).
+func NewOpenAI(apiKey, baseURL, defaultModel string) (*OpenAIClient, error) {
+	if baseURL == "" {
+		baseURL = os.Getenv("OPENAI_BASE_URL")
+	}
+	if baseURL == "" {
+		baseURL = openaiDefaultBaseURL
+	}
+	return newOpenAILike("openai", apiKey, "OPENAI_API_KEY", baseURL, defaultModel, openaiDefaultModel)
 }
 
 // NewOpenRouter builds an OpenAIClient that talks to https://openrouter.ai.
 // Uses the same Chat Completions wire shape as OpenAI; only the host and
 // the env-var fallback differ.
-func NewOpenRouter(apiKey, defaultModel string) (*OpenAIClient, error) {
-	return newOpenAILike("openrouter", apiKey, "OPENROUTER_API_KEY", "https://openrouter.ai/api", defaultModel, "anthropic/claude-sonnet-4-6")
+//
+// baseURL override: empty → OPENROUTER_BASE_URL → https://openrouter.ai/api.
+func NewOpenRouter(apiKey, baseURL, defaultModel string) (*OpenAIClient, error) {
+	if baseURL == "" {
+		baseURL = os.Getenv("OPENROUTER_BASE_URL")
+	}
+	if baseURL == "" {
+		baseURL = "https://openrouter.ai/api"
+	}
+	return newOpenAILike("openrouter", apiKey, "OPENROUTER_API_KEY", baseURL, defaultModel, "anthropic/claude-sonnet-4-6")
 }
 
 func newOpenAILike(provider, apiKey, envVar, baseURL, defaultModel, fallbackModel string) (*OpenAIClient, error) {
@@ -67,6 +87,10 @@ func newOpenAILike(provider, apiKey, envVar, baseURL, defaultModel, fallbackMode
 		httpClient:   &http.Client{Timeout: 120 * time.Second},
 	}, nil
 }
+
+// BaseURL returns the resolved base URL for telemetry / debugging.
+// Useful when --json output wants to record which endpoint was hit.
+func (c *OpenAIClient) BaseURL() string { return c.baseURL }
 
 func (c *OpenAIClient) Provider() string { return c.provider }
 func (c *OpenAIClient) Model() string    { return c.defaultModel }

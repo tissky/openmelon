@@ -80,27 +80,41 @@ const (
 
 // NewOpenAI builds an OpenAIGenerator.
 //
-// apiKey: explicit key, or "" to read OPENAI_API_KEY from env.
-// defaultModel: empty → gpt-image-1 (the current general-purpose default;
-// override per-call via GenerateOptions.Model).
-func NewOpenAI(apiKey, defaultModel string) (*OpenAIGenerator, error) {
+// Env-var fallbacks (only used when the matching argument is ""):
+//   - apiKey ← OPENAI_API_KEY
+//   - baseURL ← OPENAI_BASE_URL  (host only, no /v1 suffix). Mirrors the
+//     convention used by the official OpenAI SDKs and most relays.
+//     Useful for ChatGPT-Plus relay services, LiteLLM, Helicone, or any
+//     other OpenAI-compatible endpoint.
+//
+// defaultModel: empty → gpt-image-1 (override per-call via GenerateOptions.Model).
+func NewOpenAI(apiKey, baseURL, defaultModel string) (*OpenAIGenerator, error) {
 	if apiKey == "" {
 		apiKey = os.Getenv("OPENAI_API_KEY")
 	}
 	if apiKey == "" {
 		return nil, ErrNoAPIKey
 	}
+	if baseURL == "" {
+		baseURL = os.Getenv("OPENAI_BASE_URL")
+	}
+	if baseURL == "" {
+		baseURL = openaiDefaultBaseURL
+	}
 	if defaultModel == "" {
 		defaultModel = openaiDefaultModel
 	}
 	return &OpenAIGenerator{
 		apiKey:       apiKey,
-		baseURL:      openaiDefaultBaseURL,
+		baseURL:      baseURL,
 		defaultModel: defaultModel,
 		// Image generation is slow — give it room.
 		httpClient: &http.Client{Timeout: 5 * time.Minute},
 	}, nil
 }
+
+// BaseURL returns the resolved base URL for telemetry / debugging.
+func (g *OpenAIGenerator) BaseURL() string { return g.baseURL }
 
 func (g *OpenAIGenerator) Provider() string { return "openai" }
 func (g *OpenAIGenerator) Model() string    { return g.defaultModel }

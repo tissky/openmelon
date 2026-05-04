@@ -39,10 +39,12 @@ func main() {
 	// Agent-mode flags (0.2).
 	prompt := fs.String("p", "", "One-shot intent (triggers agent mode)")
 	skillSpec := fs.String("skill", "skillplus:food-street-realism", "Skill spec: skillplus:<name>, path:<dir>, or a bare path")
-	llmProvider := fs.String("llm", "anthropic", "LLM provider for prompt structuring (anthropic|openai|openrouter)")
+	llmProvider := fs.String("llm", "auto", "LLM provider for prompt structuring (auto|anthropic|openai|openrouter). 'auto' picks based on which *_API_KEY is set, preferring Anthropic.")
 	llmModel := fs.String("llm-model", "", "Override LLM default model")
+	llmBaseURL := fs.String("llm-base-url", "", "Override LLM base URL — useful for proxies / relays. Default reads OPENAI_BASE_URL or OPENROUTER_BASE_URL env per provider.")
 	imgEnabled := fs.Bool("image", true, "Generate an image from the structured generation_prompt")
 	imgModel := fs.String("image-model", "", "Override image generator default model (gpt-image-1 / etc.)")
+	imgBaseURL := fs.String("image-base-url", "", "Override OpenAI image API base URL — useful for relays. Default reads OPENAI_BASE_URL env.")
 	publish := fs.String("publish", "", "Publish the result after generation: vbox (requires vbox-cli on PATH and VBOX_API_KEY)")
 	postText := fs.String("post-text", "", "Override post text when publishing (default: the user's intent)")
 	skillRoot := fs.String("skill-root", "", "Directory under which skillplus:<name> resolves to <root>/examples/<name>.skillplus (also: $SKILLPLUS_EXAMPLES_ROOT)")
@@ -78,8 +80,10 @@ func main() {
 			skillSpec:    *skillSpec,
 			llmProvider:  *llmProvider,
 			llmModel:     *llmModel,
+			llmBaseURL:   *llmBaseURL,
 			imageEnabled: *imgEnabled,
 			imageModel:   *imgModel,
+			imageBaseURL: *imgBaseURL,
 			publish:      *publish,
 			postText:     *postText,
 			locale:       *locale,
@@ -140,8 +144,10 @@ type agentOpts struct {
 	skillSpec    string
 	llmProvider  string
 	llmModel     string
+	llmBaseURL   string
 	imageEnabled bool
 	imageModel   string
+	imageBaseURL string
 	publish      string
 	postText     string
 	locale       string
@@ -153,7 +159,7 @@ type agentOpts struct {
 }
 
 func runAgent(ctx context.Context, opts agentOpts) error {
-	llmClient, err := llm.New(opts.llmProvider, "", opts.llmModel)
+	llmClient, err := llm.New(opts.llmProvider, "", opts.llmBaseURL, opts.llmModel)
 	if err != nil {
 		if errors.Is(err, llm.ErrNoAPIKey) {
 			return fmt.Errorf("no API key for %s — set %s in your environment",
@@ -164,7 +170,7 @@ func runAgent(ctx context.Context, opts agentOpts) error {
 
 	var imgGen imagegen.Generator
 	if opts.imageEnabled {
-		imgGen, err = imagegen.NewOpenAI("", opts.imageModel)
+		imgGen, err = imagegen.NewOpenAI("", opts.imageBaseURL, opts.imageModel)
 		if err != nil {
 			if errors.Is(err, imagegen.ErrNoAPIKey) {
 				return fmt.Errorf("image generation requires OPENAI_API_KEY (or pass --image=false to skip)")

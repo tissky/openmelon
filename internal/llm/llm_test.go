@@ -14,7 +14,7 @@ import (
 // vendor wire shape is verified without burning real API credits.
 
 func TestNew_UnknownProvider(t *testing.T) {
-	if _, err := New("notavendor", "key", ""); err == nil {
+	if _, err := New("notavendor", "key", "", ""); err == nil {
 		t.Fatal("expected error for unknown provider")
 	}
 }
@@ -28,7 +28,7 @@ func TestAnthropic_NoKey(t *testing.T) {
 
 func TestOpenAI_NoKey(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "")
-	if _, err := NewOpenAI("", ""); err != ErrNoAPIKey {
+	if _, err := NewOpenAI("", "", ""); err != ErrNoAPIKey {
 		t.Fatalf("expected ErrNoAPIKey, got %v", err)
 	}
 }
@@ -199,5 +199,127 @@ func TestProviderAndModel(t *testing.T) {
 	o := &OpenAIClient{provider: "openai", defaultModel: "gpt-y"}
 	if o.Provider() != "openai" || o.Model() != "gpt-y" {
 		t.Errorf("OpenAI accessors wrong: %s / %s", o.Provider(), o.Model())
+	}
+}
+
+// --- new: OpenAI base URL + auto detection ---
+
+func TestOpenAI_BaseURL_FromExplicitArg(t *testing.T) {
+	t.Setenv("OPENAI_BASE_URL", "")
+	c, err := NewOpenAI("test", "https://relay.example.com", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.BaseURL() != "https://relay.example.com" {
+		t.Errorf("expected explicit base URL to win, got %q", c.BaseURL())
+	}
+}
+
+func TestOpenAI_BaseURL_FromEnvFallback(t *testing.T) {
+	t.Setenv("OPENAI_BASE_URL", "https://env-relay.example.com")
+	c, err := NewOpenAI("test", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.BaseURL() != "https://env-relay.example.com" {
+		t.Errorf("expected env fallback to win, got %q", c.BaseURL())
+	}
+}
+
+func TestOpenAI_BaseURL_DefaultsToOfficial(t *testing.T) {
+	t.Setenv("OPENAI_BASE_URL", "")
+	c, err := NewOpenAI("test", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.BaseURL() != "https://api.openai.com" {
+		t.Errorf("expected default base URL, got %q", c.BaseURL())
+	}
+}
+
+func TestNew_Auto_PrefersAnthropicWhenBothKeysSet(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "ant-k")
+	t.Setenv("OPENAI_API_KEY", "openai-k")
+	c, err := New("auto", "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Provider() != "anthropic" {
+		t.Errorf("expected auto → anthropic when both set, got %q", c.Provider())
+	}
+}
+
+func TestNew_Auto_FallsBackToOpenAI(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "openai-k")
+	t.Setenv("OPENROUTER_API_KEY", "")
+	c, err := New("auto", "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Provider() != "openai" {
+		t.Errorf("expected auto → openai when only OPENAI_API_KEY set, got %q", c.Provider())
+	}
+}
+
+func TestNew_Auto_FallsBackToOpenRouter(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("OPENROUTER_API_KEY", "or-k")
+	c, err := New("auto", "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Provider() != "openrouter" {
+		t.Errorf("expected auto → openrouter, got %q", c.Provider())
+	}
+}
+
+func TestNew_Auto_FailsWhenNoKeysSet(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("OPENROUTER_API_KEY", "")
+	_, err := New("auto", "", "", "")
+	if err == nil {
+		t.Fatal("expected error for auto with no keys")
+	}
+	if !strings.Contains(err.Error(), "ANTHROPIC_API_KEY") {
+		t.Errorf("expected helpful message listing env vars, got %v", err)
+	}
+}
+
+func TestNew_EmptyProvider_AlsoMeansAuto(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "openai-k")
+	t.Setenv("OPENROUTER_API_KEY", "")
+	c, err := New("", "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Provider() != "openai" {
+		t.Errorf("expected empty provider to behave like 'auto', got %q", c.Provider())
+	}
+}
+
+func TestOpenAI_RequestUsesCustomBaseURL(t *testing.T) {
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		_ = json.NewEncoder(w).Encode(openaiResponse{
+			Choices: []openaiChoice{{Message: openaiMessage{Content: "ok"}}},
+		})
+	}))
+	defer server.Close()
+
+	c, err := NewOpenAI("k", server.URL, "any")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.httpClient = server.Client()
+	if _, err := c.Complete(context.Background(), CompleteOptions{User: "hi"}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if !called {
+		t.Fatal("custom base URL was not hit")
 	}
 }

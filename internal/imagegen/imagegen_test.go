@@ -13,7 +13,7 @@ import (
 
 func TestNewOpenAI_NoKey(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "")
-	if _, err := NewOpenAI("", ""); err != ErrNoAPIKey {
+	if _, err := NewOpenAI("", "", ""); err != ErrNoAPIKey {
 		t.Fatalf("expected ErrNoAPIKey, got %v", err)
 	}
 }
@@ -107,5 +107,38 @@ func TestProviderAndModel(t *testing.T) {
 	g := &OpenAIGenerator{defaultModel: "gpt-image-1"}
 	if g.Provider() != "openai" || g.Model() != "gpt-image-1" {
 		t.Errorf("accessors wrong: %s / %s", g.Provider(), g.Model())
+	}
+}
+
+func TestOpenAI_BaseURL_FromExplicit(t *testing.T) {
+	t.Setenv("OPENAI_BASE_URL", "")
+	g, err := NewOpenAI("k", "https://relay.example.com", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.BaseURL() != "https://relay.example.com" {
+		t.Errorf("expected explicit base URL, got %q", g.BaseURL())
+	}
+}
+
+func TestOpenAI_BaseURL_FromEnv(t *testing.T) {
+	t.Setenv("OPENAI_BASE_URL", "https://env-relay.example.com")
+	g, err := NewOpenAI("k", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.BaseURL() != "https://env-relay.example.com" {
+		t.Errorf("expected env base URL, got %q", g.BaseURL())
+	}
+}
+
+func TestOpenAI_BaseURL_Default(t *testing.T) {
+	t.Setenv("OPENAI_BASE_URL", "")
+	g, err := NewOpenAI("k", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.BaseURL() != "https://api.openai.com" {
+		t.Errorf("expected default base URL, got %q", g.BaseURL())
 	}
 }
