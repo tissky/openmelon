@@ -26,6 +26,9 @@ import (
 // is empty.
 var ErrNoAPIKey = errors.New("imagegen: no API key supplied and OPENAI_API_KEY env is empty")
 
+// ErrModelRequired is returned when no model id is passed.
+var ErrModelRequired = errors.New("imagegen: no model id supplied — pass --image-model")
+
 // Generator generates a single image from a text prompt.
 //
 // Returns the raw image bytes (PNG today; future vendors may return
@@ -75,19 +78,17 @@ type OpenAIGenerator struct {
 
 const (
 	openaiDefaultBaseURL = "https://api.openai.com"
-	openaiDefaultModel   = "gpt-image-1"
 )
 
 // NewOpenAI builds an OpenAIGenerator.
 //
 // Env-var fallbacks (only used when the matching argument is ""):
 //   - apiKey ← OPENAI_API_KEY
-//   - baseURL ← OPENAI_BASE_URL  (host only, no /v1 suffix). Mirrors the
-//     convention used by the official OpenAI SDKs and most relays.
-//     Useful for ChatGPT-Plus relay services, LiteLLM, Helicone, or any
-//     other OpenAI-compatible endpoint.
+//   - baseURL ← OPENAI_BASE_URL  (host only, no /v1 suffix). Useful for
+//     ChatGPT-Plus relays, LiteLLM, Helicone, or any OpenAI-compatible host.
 //
-// defaultModel: empty → gpt-image-1 (override per-call via GenerateOptions.Model).
+// defaultModel: required — pass an explicit model id (e.g. "gpt-image-1",
+// "dall-e-3"). We do not bake in vendor model defaults.
 func NewOpenAI(apiKey, baseURL, defaultModel string) (*OpenAIGenerator, error) {
 	if apiKey == "" {
 		apiKey = os.Getenv("OPENAI_API_KEY")
@@ -102,7 +103,7 @@ func NewOpenAI(apiKey, baseURL, defaultModel string) (*OpenAIGenerator, error) {
 		baseURL = openaiDefaultBaseURL
 	}
 	if defaultModel == "" {
-		defaultModel = openaiDefaultModel
+		return nil, ErrModelRequired
 	}
 	return &OpenAIGenerator{
 		apiKey:       apiKey,

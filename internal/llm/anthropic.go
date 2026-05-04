@@ -21,7 +21,6 @@ import (
 
 const (
 	anthropicDefaultBaseURL = "https://api.anthropic.com"
-	anthropicDefaultModel   = "claude-sonnet-4-6"
 	anthropicAPIVersion     = "2023-06-01"
 )
 
@@ -36,8 +35,9 @@ type AnthropicClient struct {
 // NewAnthropic builds an AnthropicClient.
 //
 // apiKey: explicit key, or "" to read ANTHROPIC_API_KEY from env.
-// defaultModel: empty → claude-sonnet-4-6 (the current cost/perf default for
-// structured-output tasks; users can override per-call via CompleteOptions.Model).
+// defaultModel: required — caller must pass an explicit model id (we
+// deliberately do not bake in vendor model defaults; the model menu
+// changes too often to live in source).
 func NewAnthropic(apiKey, defaultModel string) (*AnthropicClient, error) {
 	if apiKey == "" {
 		apiKey = os.Getenv("ANTHROPIC_API_KEY")
@@ -46,7 +46,7 @@ func NewAnthropic(apiKey, defaultModel string) (*AnthropicClient, error) {
 		return nil, ErrNoAPIKey
 	}
 	if defaultModel == "" {
-		defaultModel = anthropicDefaultModel
+		return nil, ErrModelRequired
 	}
 	return &AnthropicClient{
 		apiKey:       apiKey,

@@ -41,6 +41,7 @@ import (
 	"github.com/eight-acres-lab/openmelon/internal/imagegen"
 	"github.com/eight-acres-lab/openmelon/internal/llm"
 	"github.com/eight-acres-lab/openmelon/internal/skillplus"
+	"github.com/eight-acres-lab/openmelon/internal/version"
 )
 
 // Agent runs one-shot content-creation requests.
@@ -68,37 +69,35 @@ type Agent struct {
 // RunInput describes a one-shot run.
 type RunInput struct {
 	// Intent is the user's free-text creation request. Required.
-	// Example: "下班后在老小区楼下吃一碗牛肉面，想发一条真实的探店帖"
 	Intent string
 
 	// SkillSpec selects which Skill-Plus package to compile. Format:
-	//   "skillplus:<name>"        — looks under <CompilerPath>/../examples/<name>.skillplus
-	//   "path:/abs/or/rel/path"   — direct path to a .skillplus directory
-	//   "<bare path>"             — treated as a path (no scheme prefix)
+	//   "skillplus:<name>"  — searched under PackageSearchRoot et al.
+	//   "path:/abs/or/rel"  — direct path to a .skillplus directory
+	//   "<bare path>"       — treated as a path (no scheme prefix)
 	// Required.
 	SkillSpec string
 
-	// Locale to compile for. Default "zh-CN" — every reference package
-	// today is zh-CN-first.
+	// Locale to compile for. Default "zh-CN".
 	Locale string
 
 	// ModelProfile is the package's per-vendor prompt overlay slug.
-	// Default "gpt-image-family" (matches the food-street-realism
-	// example's image vendor).
+	// Default "gpt-image-family".
 	ModelProfile string
 
 	// Vars are runtime overrides passed to the compiler as `--var k=v`.
-	// Optional.
 	Vars map[string]string
 
 	// OutputDir is where artifacts (image, provenance) are written.
 	// Default ".openmelon/artifacts".
 	OutputDir string
 
+	// ImageSize is passed to the image generator (WxH). Empty → vendor default.
+	ImageSize string
+
 	// PackageSearchRoot is the directory under which skill specs of the
 	// form "skillplus:<name>" are resolved as
-	// "<root>/examples/<name>.skillplus". Default: the parent of the
-	// agent's Compiler.CompilerPath, or the current working directory.
+	// "<root>/examples/<name>.skillplus".
 	PackageSearchRoot string
 }
 
@@ -223,7 +222,10 @@ func (a *Agent) RunOneShot(ctx context.Context, in RunInput) (*RunResult, error)
 	if genPrompt, ok := structured["generation_prompt"].(string); ok && genPrompt != "" {
 		result.GenerationPrompt = genPrompt
 		if a.ImageGen != nil {
-			img, err := a.ImageGen.Generate(ctx, imagegen.GenerateOptions{Prompt: genPrompt})
+			img, err := a.ImageGen.Generate(ctx, imagegen.GenerateOptions{
+				Prompt: genPrompt,
+				Size:   in.ImageSize,
+			})
 			if err != nil {
 				return result, fmt.Errorf("image generation: %w", err)
 			}
@@ -406,7 +408,7 @@ func writeProvenance(outputDir string, in RunInput, a *Agent, r *RunResult) (str
 	entry := map[string]any{
 		"ts":            r.FinishedAt.Format(time.RFC3339),
 		"agent":         "openmelon",
-		"agent_version": "0.2.0-dev",
+		"agent_version": version.Version,
 		"skill": map[string]any{
 			"id":            r.SkillID,
 			"version":       r.SkillVersion,

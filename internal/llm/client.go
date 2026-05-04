@@ -93,6 +93,11 @@ type CompleteOptions struct {
 // AND the env fallback is empty.
 var ErrNoAPIKey = errors.New("llm: no API key supplied and no env fallback set")
 
+// ErrModelRequired is returned when no model id is passed AND no env
+// fallback is set. We deliberately do not bake vendor model defaults
+// into the source — the menu changes too often.
+var ErrModelRequired = errors.New("llm: no model id supplied — pass --llm-model or set the per-provider env var")
+
 // completeError wraps vendor errors with context. Implementations construct
 // this so the agent loop can present a unified failure surface.
 type completeError struct {

@@ -20,7 +20,6 @@ import (
 
 const (
 	openaiDefaultBaseURL = "https://api.openai.com"
-	openaiDefaultModel   = "gpt-5"
 )
 
 // OpenAIClient implements Client against OpenAI's Chat Completions API or
@@ -38,12 +37,12 @@ type OpenAIClient struct {
 //
 // Env-var fallbacks (only used when the matching argument is ""):
 //   - apiKey ← OPENAI_API_KEY
-//   - baseURL ← OPENAI_BASE_URL  (e.g. https://api.openai.com — host only,
-//     no /v1 suffix; matches the convention used by the official OpenAI
-//     SDKs and most relays). Useful for ChatGPT-Plus relays, LiteLLM,
-//     Helicone, vLLM, LM Studio, or any other OpenAI-compatible host.
+//   - baseURL ← OPENAI_BASE_URL  (host only, no /v1 suffix). Matches the
+//     official OpenAI SDK convention. Useful for ChatGPT-Plus relays,
+//     LiteLLM, Helicone, vLLM, LM Studio, or any compatible host.
 //
-// defaultModel: empty → gpt-5 (override per-call via CompleteOptions.Model).
+// defaultModel: required — pass an explicit model id. We do not bake in
+// vendor model defaults; the menu changes too often to live in source.
 func NewOpenAI(apiKey, baseURL, defaultModel string) (*OpenAIClient, error) {
 	if baseURL == "" {
 		baseURL = os.Getenv("OPENAI_BASE_URL")
@@ -51,7 +50,7 @@ func NewOpenAI(apiKey, baseURL, defaultModel string) (*OpenAIClient, error) {
 	if baseURL == "" {
 		baseURL = openaiDefaultBaseURL
 	}
-	return newOpenAILike("openai", apiKey, "OPENAI_API_KEY", baseURL, defaultModel, openaiDefaultModel)
+	return newOpenAILike("openai", apiKey, "OPENAI_API_KEY", baseURL, defaultModel)
 }
 
 // NewOpenRouter builds an OpenAIClient that talks to https://openrouter.ai.
@@ -59,6 +58,7 @@ func NewOpenAI(apiKey, baseURL, defaultModel string) (*OpenAIClient, error) {
 // the env-var fallback differ.
 //
 // baseURL override: empty → OPENROUTER_BASE_URL → https://openrouter.ai/api.
+// defaultModel is required (e.g. "x-ai/grok-4", "anthropic/claude-sonnet-4-6").
 func NewOpenRouter(apiKey, baseURL, defaultModel string) (*OpenAIClient, error) {
 	if baseURL == "" {
 		baseURL = os.Getenv("OPENROUTER_BASE_URL")
@@ -66,10 +66,10 @@ func NewOpenRouter(apiKey, baseURL, defaultModel string) (*OpenAIClient, error) 
 	if baseURL == "" {
 		baseURL = "https://openrouter.ai/api"
 	}
-	return newOpenAILike("openrouter", apiKey, "OPENROUTER_API_KEY", baseURL, defaultModel, "anthropic/claude-sonnet-4-6")
+	return newOpenAILike("openrouter", apiKey, "OPENROUTER_API_KEY", baseURL, defaultModel)
 }
 
-func newOpenAILike(provider, apiKey, envVar, baseURL, defaultModel, fallbackModel string) (*OpenAIClient, error) {
+func newOpenAILike(provider, apiKey, envVar, baseURL, defaultModel string) (*OpenAIClient, error) {
 	if apiKey == "" {
 		apiKey = os.Getenv(envVar)
 	}
@@ -77,7 +77,7 @@ func newOpenAILike(provider, apiKey, envVar, baseURL, defaultModel, fallbackMode
 		return nil, ErrNoAPIKey
 	}
 	if defaultModel == "" {
-		defaultModel = fallbackModel
+		return nil, ErrModelRequired
 	}
 	return &OpenAIClient{
 		apiKey:       apiKey,

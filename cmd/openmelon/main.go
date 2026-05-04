@@ -43,8 +43,10 @@ func main() {
 	llmModel := fs.String("llm-model", "", "Override LLM default model")
 	llmBaseURL := fs.String("llm-base-url", "", "Override LLM base URL — useful for proxies / relays. Default reads OPENAI_BASE_URL or OPENROUTER_BASE_URL env per provider.")
 	imgEnabled := fs.Bool("image", true, "Generate an image from the structured generation_prompt")
-	imgModel := fs.String("image-model", "", "Override image generator default model (gpt-image-1 / etc.)")
-	imgBaseURL := fs.String("image-base-url", "", "Override OpenAI image API base URL — useful for relays. Default reads OPENAI_BASE_URL env.")
+	imgProvider := fs.String("image-provider", "openai", "Image generator provider (openai|openrouter)")
+	imgModel := fs.String("image-model", "", "Image model id — required when --image is true (e.g. gpt-image-1, dall-e-3, openai/gpt-5-image, google/gemini-2.5-flash-image)")
+	imgBaseURL := fs.String("image-base-url", "", "Override image API base URL. Default reads OPENAI_BASE_URL or OPENROUTER_BASE_URL based on --image-provider.")
+	imgSize := fs.String("image-size", "", "Image size as WxH (e.g. 1024x1024, 1792x1024). Empty → vendor default.")
 	publish := fs.String("publish", "", "Publish the result after generation: vbox (requires vbox-cli on PATH and VBOX_API_KEY)")
 	postText := fs.String("post-text", "", "Override post text when publishing (default: the user's intent)")
 	skillRoot := fs.String("skill-root", "", "Directory under which skillplus:<name> resolves to <root>/examples/<name>.skillplus (also: $SKILLPLUS_EXAMPLES_ROOT)")
@@ -76,22 +78,24 @@ func main() {
 	switch {
 	case *prompt != "":
 		err := runAgent(ctx, agentOpts{
-			intent:       *prompt,
-			skillSpec:    *skillSpec,
-			llmProvider:  *llmProvider,
-			llmModel:     *llmModel,
-			llmBaseURL:   *llmBaseURL,
-			imageEnabled: *imgEnabled,
-			imageModel:   *imgModel,
-			imageBaseURL: *imgBaseURL,
-			publish:      *publish,
-			postText:     *postText,
-			locale:       *locale,
-			modelProfile: *modelProfile,
-			compilerPath: *compilerPath,
-			artifactDir:  *artifactDir,
-			skillRoot:    *skillRoot,
-			jsonOut:      *jsonOut,
+			intent:        *prompt,
+			skillSpec:     *skillSpec,
+			llmProvider:   *llmProvider,
+			llmModel:      *llmModel,
+			llmBaseURL:    *llmBaseURL,
+			imageEnabled:  *imgEnabled,
+			imageProvider: *imgProvider,
+			imageModel:    *imgModel,
+			imageBaseURL:  *imgBaseURL,
+			imageSize:     *imgSize,
+			publish:       *publish,
+			postText:      *postText,
+			locale:        *locale,
+			modelProfile:  *modelProfile,
+			compilerPath:  *compilerPath,
+			artifactDir:   *artifactDir,
+			skillRoot:     *skillRoot,
+			jsonOut:       *jsonOut,
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[openmelon] error: %v\n", err)
@@ -140,40 +144,57 @@ func compilerPathOrDefault(p string) string {
 // =====================================================================
 
 type agentOpts struct {
-	intent       string
-	skillSpec    string
-	llmProvider  string
-	llmModel     string
-	llmBaseURL   string
-	imageEnabled bool
-	imageModel   string
-	imageBaseURL string
-	publish      string
-	postText     string
-	locale       string
-	modelProfile string
-	compilerPath string
-	artifactDir  string
-	skillRoot    string
-	jsonOut      bool
+	intent        string
+	skillSpec     string
+	llmProvider   string
+	llmModel      string
+	llmBaseURL    string
+	imageEnabled  bool
+	imageProvider string
+	imageModel    string
+	imageBaseURL  string
+	imageSize     string
+	publish       string
+	postText      string
+	locale        string
+	modelProfile  string
+	compilerPath  string
+	artifactDir   string
+	skillRoot     string
+	jsonOut       bool
 }
 
 func runAgent(ctx context.Context, opts agentOpts) error {
 	llmClient, err := llm.New(opts.llmProvider, "", opts.llmBaseURL, opts.llmModel)
 	if err != nil {
-		if errors.Is(err, llm.ErrNoAPIKey) {
+		switch {
+		case errors.Is(err, llm.ErrNoAPIKey):
 			return fmt.Errorf("no API key for %s — set %s in your environment",
 				opts.llmProvider, envVarFor(opts.llmProvider))
+		case errors.Is(err, llm.ErrModelRequired):
+			return fmt.Errorf("--llm-model is required (e.g. --llm-model x-ai/grok-4 for openrouter, gpt-5 for openai, claude-sonnet-4-6 for anthropic) — we don't bake in vendor model defaults")
 		}
 		return fmt.Errorf("init LLM client: %w", err)
 	}
 
 	var imgGen imagegen.Generator
 	if opts.imageEnabled {
-		imgGen, err = imagegen.NewOpenAI("", opts.imageBaseURL, opts.imageModel)
+		imgGen, err = imagegen.New(opts.imageProvider, "", opts.imageBaseURL, opts.imageModel)
 		if err != nil {
-			if errors.Is(err, imagegen.ErrNoAPIKey) {
-				return fmt.Errorf("image generation requires OPENAI_API_KEY (or pass --image=false to skip)")
+			switch {
+			case errors.Is(err, imagegen.ErrNoAPIKey):
+				envHint := "OPENAI_API_KEY"
+				if opts.imageProvider == "openrouter" {
+					envHint = "OPENROUTER_API_KEY"
+				}
+				return fmt.Errorf("image generation requires %s (or pass --image=false to skip)", envHint)
+			case errors.Is(err, imagegen.ErrModelRequired):
+				switch opts.imageProvider {
+				case "openrouter":
+					return fmt.Errorf("--image-model is required (e.g. openai/gpt-5-image, google/gemini-2.5-flash-image — see openrouter.ai/models?modality=image-output)")
+				default:
+					return fmt.Errorf("--image-model is required (e.g. --image-model gpt-image-1 or dall-e-3); pass --image=false to skip image generation entirely")
+				}
 			}
 			return fmt.Errorf("init image generator: %w", err)
 		}
@@ -203,6 +224,7 @@ func runAgent(ctx context.Context, opts agentOpts) error {
 		Locale:            opts.locale,
 		ModelProfile:      opts.modelProfile,
 		OutputDir:         opts.artifactDir,
+		ImageSize:         opts.imageSize,
 		PackageSearchRoot: opts.skillRoot,
 	})
 	if err != nil {

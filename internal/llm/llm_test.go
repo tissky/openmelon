@@ -206,7 +206,7 @@ func TestProviderAndModel(t *testing.T) {
 
 func TestOpenAI_BaseURL_FromExplicitArg(t *testing.T) {
 	t.Setenv("OPENAI_BASE_URL", "")
-	c, err := NewOpenAI("test", "https://relay.example.com", "")
+	c, err := NewOpenAI("test", "https://relay.example.com", "gpt-x")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +217,7 @@ func TestOpenAI_BaseURL_FromExplicitArg(t *testing.T) {
 
 func TestOpenAI_BaseURL_FromEnvFallback(t *testing.T) {
 	t.Setenv("OPENAI_BASE_URL", "https://env-relay.example.com")
-	c, err := NewOpenAI("test", "", "")
+	c, err := NewOpenAI("test", "", "gpt-x")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +228,7 @@ func TestOpenAI_BaseURL_FromEnvFallback(t *testing.T) {
 
 func TestOpenAI_BaseURL_DefaultsToOfficial(t *testing.T) {
 	t.Setenv("OPENAI_BASE_URL", "")
-	c, err := NewOpenAI("test", "", "")
+	c, err := NewOpenAI("test", "", "gpt-x")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +240,7 @@ func TestOpenAI_BaseURL_DefaultsToOfficial(t *testing.T) {
 func TestNew_Auto_PrefersAnthropicWhenBothKeysSet(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "ant-k")
 	t.Setenv("OPENAI_API_KEY", "openai-k")
-	c, err := New("auto", "", "", "")
+	c, err := New("auto", "", "", "claude-x")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +253,7 @@ func TestNew_Auto_FallsBackToOpenAI(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("OPENAI_API_KEY", "openai-k")
 	t.Setenv("OPENROUTER_API_KEY", "")
-	c, err := New("auto", "", "", "")
+	c, err := New("auto", "", "", "claude-x")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +266,7 @@ func TestNew_Auto_FallsBackToOpenRouter(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("OPENROUTER_API_KEY", "or-k")
-	c, err := New("auto", "", "", "")
+	c, err := New("auto", "", "", "claude-x")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,7 +279,7 @@ func TestNew_Auto_FailsWhenNoKeysSet(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("OPENROUTER_API_KEY", "")
-	_, err := New("auto", "", "", "")
+	_, err := New("auto", "", "", "claude-x")
 	if err == nil {
 		t.Fatal("expected error for auto with no keys")
 	}
@@ -292,7 +292,7 @@ func TestNew_EmptyProvider_AlsoMeansAuto(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("OPENAI_API_KEY", "openai-k")
 	t.Setenv("OPENROUTER_API_KEY", "")
-	c, err := New("", "", "", "")
+	c, err := New("", "", "", "claude-x")
 	if err != nil {
 		t.Fatal(err)
 	}

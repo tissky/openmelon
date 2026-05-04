@@ -112,7 +112,7 @@ func TestProviderAndModel(t *testing.T) {
 
 func TestOpenAI_BaseURL_FromExplicit(t *testing.T) {
 	t.Setenv("OPENAI_BASE_URL", "")
-	g, err := NewOpenAI("k", "https://relay.example.com", "")
+	g, err := NewOpenAI("k", "https://relay.example.com", "gpt-x")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestOpenAI_BaseURL_FromExplicit(t *testing.T) {
 
 func TestOpenAI_BaseURL_FromEnv(t *testing.T) {
 	t.Setenv("OPENAI_BASE_URL", "https://env-relay.example.com")
-	g, err := NewOpenAI("k", "", "")
+	g, err := NewOpenAI("k", "", "gpt-x")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestOpenAI_BaseURL_FromEnv(t *testing.T) {
 
 func TestOpenAI_BaseURL_Default(t *testing.T) {
 	t.Setenv("OPENAI_BASE_URL", "")
-	g, err := NewOpenAI("k", "", "")
+	g, err := NewOpenAI("k", "", "gpt-x")
 	if err != nil {
 		t.Fatal(err)
 	}
