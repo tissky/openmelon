@@ -1,0 +1,30 @@
+{
+  "id": "demo-food-project",
+  "name": "Street Food Realism Demo",
+  "platform": "xiaohongshu",
+  "audience": "urban food explorers",
+  "persona": "ordinary after-work food explorer",
+  "memory": {},
+  "constraints": [],
+  "workflows": {
+    "food_exploration": {
+      "id": "food_exploration",
+      "name": "Food Exploration Workflow",
+      "vertical": "food",
+      "stages": [
+        {
+          "stage": "visual_concretization",
+          "skillplus_package": "../../../skillplus/examples/food-street-realism.skillplus",
+          "compile_target": "openmelon",
+          "model_profile": "image_generator",
+          "artifact_type": "image_prompt",
+          "locale": "zh-CN",
+          "vars": {
+            "realism_level": "high",
+            "visual_evidence_density": "dense"
+          }
+        }
+      ]
+    }
+  }
+}
