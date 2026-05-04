@@ -27,3 +27,7 @@ coverage.html
 # Build
 /bin/
 /dist/
+
+# Spec / planning artifacts
+/specs/
+/.specify/
