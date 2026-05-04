@@ -2,7 +2,7 @@
 
 ## Our Pledge
 
-Skill-Plus is committed to a respectful, inclusive, and constructive open source community. Contributors, reviewers, maintainers, and users are expected to collaborate in good faith and treat others with professionalism.
+OpenMelon is committed to a respectful, inclusive, and constructive open source community. Contributors, reviewers, maintainers, and users are expected to collaborate in good faith and treat others with professionalism.
 
 ## Expected Behavior
 

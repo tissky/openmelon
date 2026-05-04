@@ -4,7 +4,7 @@ All contributors must sign the Point Eight Individual Contributor License Agreem
 
 ## Why a CLA Is Required
 
-Skill-Plus is intended to be an auditable open standard. The CLA helps ensure that contributions can be distributed under the project's Apache-2.0 license and that contributors have the right to submit their work.
+OpenMelon is intended to be an auditable open source content-creation runtime. The CLA helps ensure that contributions can be distributed under the project's Apache-2.0 license and that contributors have the right to submit their work.
 
 ## DCO Sign-off
 

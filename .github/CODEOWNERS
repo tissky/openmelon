@@ -1,17 +1,25 @@
 # OpenMelon community ownership
+#
+# The @eight-acres-lab/core team is the default reviewer suggestion for every
+# change. CODEOWNERS approval is not enforced (require_code_owner_reviews=false
+# on branch protection); these entries provide auto-suggested reviewers.
 
-/cmd/                    @openmelon/maintainers
-/internal/workflow/      @openmelon/workflow-reviewers @openmelon/maintainers
-/internal/memory/        @openmelon/workflow-reviewers @openmelon/maintainers
-/internal/artifacts/     @openmelon/workflow-reviewers @openmelon/maintainers
-/internal/provenance/    @openmelon/workflow-reviewers @openmelon/maintainers
-/internal/labeling/      @openmelon/workflow-reviewers @openmelon/maintainers
-/internal/skillplus/     @skillplus/spec-approvers @openmelon/maintainers
-/docs/                   @openmelon/maintainers
-/examples/               @openmelon/maintainers
-/.github/                @openmelon/maintainers
-/CODE_OF_CONDUCT.md      @openmelon/maintainers
-/SECURITY.md             @openmelon/security-reviewers @openmelon/maintainers
-/GOVERNANCE.md           @openmelon/maintainers
-/RFC.md                  @openmelon/workflow-reviewers @openmelon/maintainers
-/CLA.md                  @openmelon/maintainers
+* @eight-acres-lab/core
+
+/cmd/                    @eight-acres-lab/core
+/internal/workflow/      @eight-acres-lab/core
+/internal/memory/        @eight-acres-lab/core
+/internal/artifacts/     @eight-acres-lab/core
+/internal/provenance/    @eight-acres-lab/core
+/internal/labeling/      @eight-acres-lab/core
+/internal/skillplus/     @eight-acres-lab/core
+/pkg/contracts/          @eight-acres-lab/core
+/pkg/openmelon/          @eight-acres-lab/core
+/docs/                   @eight-acres-lab/core
+/examples/               @eight-acres-lab/core
+/.github/                @eight-acres-lab/core
+/CODE_OF_CONDUCT.md      @eight-acres-lab/core
+/SECURITY.md             @eight-acres-lab/core
+/GOVERNANCE.md           @eight-acres-lab/core
+/RFC.md                  @eight-acres-lab/core
+/CLA.md                  @eight-acres-lab/core
