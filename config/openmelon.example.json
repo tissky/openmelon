@@ -1,4 +1,7 @@
 {
+  "compiler_path": "../skillplus",
+  "artifact_dir": ".openmelon/artifacts",
+  "provenance_path": ".openmelon/provenance.jsonl",
   "models": {
     "planner": {
       "provider": "openai-compatible",
@@ -11,10 +14,10 @@
       "role": "visual prompt concretization"
     },
     "image_generator": {
-      "provider": "command",
+      "provider": "shell",
       "model": "gpt-image-2",
       "role": "image artifact generation",
-      "command": "python3 ../gpt_image_api_demo/generate_image.py --provider oauth-tool --model {{model}} --output {{output}} {{prompt_json}}"
+      "command": "python3 ../gpt_image_api_demo/generate_image.py --stdin-prompt"
     },
     "reviewer": {
       "provider": "openai-compatible",
