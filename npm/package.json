@@ -1,6 +1,6 @@
 {
   "name": "@e8s/openmelon",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A content-creation agent that runs in your terminal.",
   "license": "Apache-2.0",
   "homepage": "https://github.com/eight-acres-lab/openmelon",
