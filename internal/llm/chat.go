@@ -97,3 +97,24 @@ type ChatResponse struct {
 type ToolCaller interface {
 	Chat(ctx context.Context, req ChatRequest) (*ChatResponse, error)
 }
+
+// StreamingToolCaller is implemented by clients that support streaming
+// the model's text + tool-call output. The runtime prefers it over
+// ToolCaller when available so the user sees per-token output instead
+// of a 30-second wait.
+//
+// Tool-call deltas are reassembled inside the implementation; callers
+// receive the fully-resolved ToolCall list in the final ChatResponse,
+// not piecemeal. Text deltas, on the other hand, fire as they arrive.
+type StreamingToolCaller interface {
+	StreamChat(ctx context.Context, req ChatRequest, h StreamChatHandler) (*ChatResponse, error)
+}
+
+// StreamChatHandler bundles the per-event callbacks. All fields are
+// optional — nil callbacks are skipped.
+type StreamChatHandler struct {
+	// OnText fires for each non-empty text delta. The delta is the new
+	// chunk only — implementations do not re-send the full accumulated
+	// text. Concatenate to reconstruct.
+	OnText func(delta string)
+}

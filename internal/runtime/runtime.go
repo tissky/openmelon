@@ -11,8 +11,9 @@
 //	   `finish` tool, or hits MaxSteps.
 //
 // The runtime is provider-agnostic: anything implementing llm.ToolCaller
-// works. Streaming text deltas inside one turn are out of scope here —
-// see runtime/stream.go (later) for that.
+// works. When the underlying client also implements llm.StreamingToolCaller
+// the runtime uses the streaming path so the REPL can render text as it
+// arrives.
 package runtime
 
 import (
@@ -30,14 +31,33 @@ const (
 	DefaultMaxSteps = 16
 )
 
+// Tracer receives structured events as the loop runs.
+//
+// Implementations render however they like — the REPL prints to a
+// terminal, tests collect events into a slice, the legacy plain-stderr
+// trace uses an io.Writer adapter (TraceWriter).
+//
+// All callbacks may be nil-safe: the runtime checks for a nil Tracer
+// before calling and never panics on a partial implementation.
+type Tracer interface {
+	OnTurnStart(turn int)
+	OnText(delta string) // streamed when the underlying client supports it; otherwise fired once with the full text
+	OnToolCall(call llm.ToolCall)
+	OnToolResult(call llm.ToolCall, content string, err error)
+	OnTurnEnd(turn int, finish llm.FinishReason)
+}
+
 // Runtime is the agent loop.
 type Runtime struct {
 	LLM      llm.ToolCaller
 	Registry *tools.Registry
 
-	// Trace, if non-nil, receives one human-readable line per loop step
-	// (model reply, tool call, tool result). cmd/openmelon wires this
-	// to os.Stderr so the user can watch the agent think.
+	// Tracer, if non-nil, receives structured per-turn events.
+	Tracer Tracer
+
+	// Trace, if non-nil, receives one human-readable line per loop step.
+	// Legacy compatibility — kept for cmd/openmelon's headless agent
+	// path. Prefer Tracer for new code.
 	Trace io.Writer
 
 	// MaxSteps caps how many model+tool round-trips the loop will run
@@ -48,11 +68,20 @@ type Runtime struct {
 // RunInput is one end-to-end agent run.
 type RunInput struct {
 	// SystemPrompt sets the agent's behavior + project context. Sent
-	// once as the first message.
+	// only when History is empty (otherwise the system prompt already
+	// lives at History[0]).
 	SystemPrompt string
 
-	// UserInput is the user's request. Sent as the first user message.
+	// UserInput is the user's request for this run. Always appended
+	// after History.
 	UserInput string
+
+	// History is the prior conversation, including any tool messages.
+	// Pass back RunResult.Messages from a previous Run to continue
+	// where you left off — that's how the REPL implements multi-turn.
+	// When non-empty, SystemPrompt is ignored (the system message is
+	// assumed to already be at History[0]).
+	History []llm.Message
 
 	// Temperature overrides the model's default. 0 → vendor default.
 	Temperature float64
@@ -64,10 +93,11 @@ type RunInput struct {
 // RunResult summarizes one loop run.
 type RunResult struct {
 	// Messages is the full conversation history, including all tool
-	// calls + tool replies. The session writer can persist it.
+	// calls + tool replies. Pass back as RunInput.History to continue.
 	Messages []llm.Message
 
-	// Steps is the number of LLM round-trips taken.
+	// Steps is the number of LLM round-trips taken in this Run call
+	// (NOT cumulative across continuations).
 	Steps int
 
 	// Finished is true when the loop exited via `finish` or
@@ -105,32 +135,54 @@ func (r *Runtime) Run(ctx context.Context, in RunInput) (*RunResult, error) {
 		})
 	}
 
-	messages := []llm.Message{
-		{Role: llm.RoleSystem, Content: in.SystemPrompt},
-		{Role: llm.RoleUser, Content: in.UserInput},
+	// Seed the message list. New conversations get system + user;
+	// continuations get history + user.
+	var messages []llm.Message
+	if len(in.History) > 0 {
+		messages = append(messages, in.History...)
+	} else if in.SystemPrompt != "" {
+		messages = append(messages, llm.Message{Role: llm.RoleSystem, Content: in.SystemPrompt})
 	}
+	if in.UserInput != "" {
+		messages = append(messages, llm.Message{Role: llm.RoleUser, Content: in.UserInput})
+	}
+
+	// Detect streaming support.
+	streamer, _ := r.LLM.(llm.StreamingToolCaller)
 
 	out := &RunResult{}
 	for step := 0; step < maxSteps; step++ {
 		out.Steps = step + 1
+		r.onTurnStart(step + 1)
 		req := llm.ChatRequest{
 			Messages:    messages,
 			Tools:       wireTools,
 			Temperature: in.Temperature,
 			MaxTokens:   in.MaxTokens,
 		}
-		resp, err := r.LLM.Chat(ctx, req)
+
+		var resp *llm.ChatResponse
+		var err error
+		if streamer != nil {
+			resp, err = streamer.StreamChat(ctx, req, llm.StreamChatHandler{
+				OnText: func(d string) { r.onText(d) },
+			})
+		} else {
+			resp, err = r.LLM.Chat(ctx, req)
+			if err == nil && resp.Message.Content != "" {
+				// Fire OnText once with the full body so non-streaming
+				// callers still see the model's reply.
+				r.onText(resp.Message.Content)
+			}
+		}
 		if err != nil {
 			return out, fmt.Errorf("runtime: chat (step %d): %w", step+1, err)
 		}
 		messages = append(messages, resp.Message)
-		r.tracef("[turn %d] reply (finish=%s, tool_calls=%d)", step+1, resp.FinishReason, len(resp.Message.ToolCalls))
-		if resp.Message.Content != "" {
-			r.tracef("[turn %d] text: %s", step+1, truncate(resp.Message.Content, 240))
-		}
+		r.legacyTracef("[turn %d] reply (finish=%s, tool_calls=%d)", step+1, resp.FinishReason, len(resp.Message.ToolCalls))
 
 		if len(resp.Message.ToolCalls) == 0 {
-			// Model finished without calling tools — done.
+			r.onTurnEnd(step+1, resp.FinishReason)
 			out.Messages = messages
 			out.Finished = resp.FinishReason == llm.FinishStop || resp.FinishReason == llm.FinishOther
 			return out, nil
@@ -139,13 +191,14 @@ func (r *Runtime) Run(ctx context.Context, in RunInput) (*RunResult, error) {
 		// Dispatch each tool call and append the result.
 		var hitFinish bool
 		for _, tc := range resp.Message.ToolCalls {
-			r.tracef("[turn %d] → %s(%s)", step+1, tc.Name, truncate(string(tc.Arguments), 240))
-			res, err := r.Registry.Dispatch(ctx, tc.Name, tc.Arguments)
+			r.onToolCall(tc)
+			r.legacyTracef("[turn %d] → %s(%s)", step+1, tc.Name, truncate(string(tc.Arguments), 240))
+
+			res, dispatchErr := r.Registry.Dispatch(ctx, tc.Name, tc.Arguments)
 			var content string
 			switch {
-			case err != nil:
-				// Surface as a structured error the model can read.
-				b, _ := json.Marshal(map[string]string{"error": err.Error()})
+			case dispatchErr != nil:
+				b, _ := json.Marshal(map[string]string{"error": dispatchErr.Error()})
 				content = string(b)
 			default:
 				b, mErr := json.Marshal(res)
@@ -154,7 +207,8 @@ func (r *Runtime) Run(ctx context.Context, in RunInput) (*RunResult, error) {
 				}
 				content = string(b)
 			}
-			r.tracef("[turn %d] ← %s", step+1, truncate(content, 240))
+			r.onToolResult(tc, content, dispatchErr)
+			r.legacyTracef("[turn %d] ← %s", step+1, truncate(content, 240))
 			messages = append(messages, llm.Message{
 				Role:       llm.RoleTool,
 				ToolCallID: tc.ID,
@@ -173,6 +227,7 @@ func (r *Runtime) Run(ctx context.Context, in RunInput) (*RunResult, error) {
 				hitFinish = true
 			}
 		}
+		r.onTurnEnd(step+1, resp.FinishReason)
 		if hitFinish {
 			out.Messages = messages
 			out.Finished = true
@@ -184,7 +239,39 @@ func (r *Runtime) Run(ctx context.Context, in RunInput) (*RunResult, error) {
 	return out, fmt.Errorf("runtime: hit MaxSteps=%d without finishing", maxSteps)
 }
 
-func (r *Runtime) tracef(format string, args ...any) {
+// --- tracer + legacy-writer fan-out ---
+
+func (r *Runtime) onTurnStart(turn int) {
+	if r.Tracer != nil {
+		r.Tracer.OnTurnStart(turn)
+	}
+}
+
+func (r *Runtime) onText(delta string) {
+	if r.Tracer != nil {
+		r.Tracer.OnText(delta)
+	}
+}
+
+func (r *Runtime) onToolCall(tc llm.ToolCall) {
+	if r.Tracer != nil {
+		r.Tracer.OnToolCall(tc)
+	}
+}
+
+func (r *Runtime) onToolResult(tc llm.ToolCall, content string, err error) {
+	if r.Tracer != nil {
+		r.Tracer.OnToolResult(tc, content, err)
+	}
+}
+
+func (r *Runtime) onTurnEnd(turn int, finish llm.FinishReason) {
+	if r.Tracer != nil {
+		r.Tracer.OnTurnEnd(turn, finish)
+	}
+}
+
+func (r *Runtime) legacyTracef(format string, args ...any) {
 	if r.Trace == nil {
 		return
 	}

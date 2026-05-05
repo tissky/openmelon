@@ -232,3 +232,106 @@ func TestRunReturnsErrorWhenMaxStepsExceeded(t *testing.T) {
 type errFake string
 
 func (e errFake) Error() string { return string(e) }
+
+func TestRunWithHistoryAppendsUserAndPreservesPriorMessages(t *testing.T) {
+	reg := tools.NewRegistry()
+	llmFake := &fakeLLM{t: t, responses: []llm.ChatResponse{{
+		Message:      llm.Message{Role: llm.RoleAssistant, Content: "ack"},
+		FinishReason: llm.FinishStop,
+	}}}
+
+	prior := []llm.Message{
+		{Role: llm.RoleSystem, Content: "be terse"},
+		{Role: llm.RoleUser, Content: "first"},
+		{Role: llm.RoleAssistant, Content: "first reply"},
+	}
+	rt := &Runtime{LLM: llmFake, Registry: reg}
+	res, err := rt.Run(context.Background(), RunInput{
+		History:   prior,
+		UserInput: "second",
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	// Wire request must include all 3 prior + the new user message.
+	if len(llmFake.lastReq.Messages) != 4 {
+		t.Fatalf("expected 4 messages sent, got %d", len(llmFake.lastReq.Messages))
+	}
+	if llmFake.lastReq.Messages[3].Content != "second" || llmFake.lastReq.Messages[3].Role != llm.RoleUser {
+		t.Errorf("user message not appended: %+v", llmFake.lastReq.Messages[3])
+	}
+	// SystemPrompt must NOT be re-injected when History is non-empty.
+	if llmFake.lastReq.Messages[0].Content != "be terse" {
+		t.Errorf("system prompt clobbered: %+v", llmFake.lastReq.Messages[0])
+	}
+	// Final result includes the new user + new assistant.
+	if len(res.Messages) != 5 {
+		t.Errorf("expected 5 result messages, got %d", len(res.Messages))
+	}
+}
+
+// captureTracer is a Tracer that records every event for assertions.
+type captureTracer struct {
+	turns      []int
+	textDeltas []string
+	calls      []llm.ToolCall
+	results    []string
+}
+
+func (c *captureTracer) OnTurnStart(turn int)         { c.turns = append(c.turns, turn) }
+func (c *captureTracer) OnText(d string)              { c.textDeltas = append(c.textDeltas, d) }
+func (c *captureTracer) OnToolCall(tc llm.ToolCall)   { c.calls = append(c.calls, tc) }
+func (c *captureTracer) OnToolResult(tc llm.ToolCall, content string, err error) {
+	c.results = append(c.results, content)
+}
+func (c *captureTracer) OnTurnEnd(turn int, _ llm.FinishReason) {}
+
+func TestTracerReceivesAllEvents(t *testing.T) {
+	reg := tools.NewRegistry()
+	reg.Register(tools.Tool{
+		Spec: tools.Spec{
+			Name: "echo", Description: "x",
+			Parameters: json.RawMessage(`{"type":"object"}`),
+		},
+		Handler: func(_ context.Context, _ json.RawMessage) (any, error) {
+			return map[string]any{"ok": true}, nil
+		},
+	})
+
+	llmFake := &fakeLLM{t: t, responses: []llm.ChatResponse{
+		{
+			Message: llm.Message{
+				Role:    llm.RoleAssistant,
+				Content: "thinking...",
+				ToolCalls: []llm.ToolCall{{ID: "x", Name: "echo", Arguments: json.RawMessage(`{}`)}},
+			},
+			FinishReason: llm.FinishToolCalls,
+		},
+		{
+			Message:      llm.Message{Role: llm.RoleAssistant, Content: "all done"},
+			FinishReason: llm.FinishStop,
+		},
+	}}
+
+	tr := &captureTracer{}
+	rt := &Runtime{LLM: llmFake, Registry: reg, Tracer: tr}
+	if _, err := rt.Run(context.Background(), RunInput{SystemPrompt: "x", UserInput: "go"}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(tr.turns) != 2 || tr.turns[0] != 1 || tr.turns[1] != 2 {
+		t.Errorf("turns: %v", tr.turns)
+	}
+	// Non-streaming fakeLLM still fires OnText once per non-empty turn.
+	if !strings.Contains(strings.Join(tr.textDeltas, ""), "thinking...") {
+		t.Errorf("text deltas missing 'thinking...': %v", tr.textDeltas)
+	}
+	if !strings.Contains(strings.Join(tr.textDeltas, ""), "all done") {
+		t.Errorf("text deltas missing 'all done': %v", tr.textDeltas)
+	}
+	if len(tr.calls) != 1 || tr.calls[0].Name != "echo" {
+		t.Errorf("tool calls: %+v", tr.calls)
+	}
+	if len(tr.results) != 1 || !strings.Contains(tr.results[0], `"ok":true`) {
+		t.Errorf("tool results: %+v", tr.results)
+	}
+}

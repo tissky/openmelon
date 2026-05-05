@@ -44,6 +44,7 @@ var subcommands = map[string]func(args []string) error{
 	"reference": runReference,
 	"material":  runMaterial,
 	"search":    runSearch,
+	"repl":      runRepl,
 }
 
 func main() {
@@ -57,6 +58,19 @@ func main() {
 		}
 		if os.Args[1] == "help" || os.Args[1] == "-h" || os.Args[1] == "--help" {
 			printHelp()
+			return
+		}
+	}
+
+	// No args inside a project → enter the REPL. Outside a project,
+	// fall through to the help banner so users see how to set up.
+	if len(os.Args) == 1 {
+		cwd, _ := os.Getwd()
+		if wd, err := projectx.Discover(cwd); err == nil && wd != "" {
+			if err := runRepl(nil); err != nil {
+				fmt.Fprintf(os.Stderr, "openmelon: %v\n", err)
+				os.Exit(1)
+			}
 			return
 		}
 	}
@@ -156,6 +170,10 @@ func main() {
 func printHelp() {
 	fmt.Fprintln(os.Stderr, "openmelon — content-creation agent for the terminal")
 	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Interactive (in a project):")
+	fmt.Fprintln(os.Stderr, "  openmelon                            Enter the REPL")
+	fmt.Fprintln(os.Stderr, "  openmelon repl                       Same; explicit form")
+	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Subcommands:")
 	fmt.Fprintln(os.Stderr, "  init [<id>]                          Set up cwd as an openmelon project")
 	fmt.Fprintln(os.Stderr, "  project list|use|show                Manage / inspect projects")
@@ -164,7 +182,7 @@ func printHelp() {
 	fmt.Fprintln(os.Stderr, "  material add|list                    Hash-addressed material pool")
 	fmt.Fprintln(os.Stderr, `  search "<query>"                     Grep across the project libraries`)
 	fmt.Fprintln(os.Stderr, "")
-	fmt.Fprintln(os.Stderr, "One-shot generation (uses current project context):")
+	fmt.Fprintln(os.Stderr, "One-shot generation:")
 	fmt.Fprintln(os.Stderr, `  openmelon -p "<intent>" [--skill skillplus:<name>] [--publish vbox]`)
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Legacy declarative workflow mode:")
