@@ -2,7 +2,7 @@
 
 ## 0.3 (current)
 
-The "becomes a real interactive agent" release. From `-p` one-shot to a Claude-Code-style TUI with the full creator workflow.
+The "becomes a real interactive agent" release. From `-p` one-shot to a full-screen interactive TUI with the full creator workflow.
 
 **Project / data model**
 - `openmelon init`, per-project `.openmelon/` (project.json + characters/ + references/ + materials/ + sessions/ + artifacts/), global registry under `~/.openmelon/`.
@@ -37,7 +37,7 @@ The "becomes a real interactive agent" release. From `-p` one-shot to a Claude-C
 - 4-tier permission gate: trusted-mode bypass → per-session allowlist → judge LLM (AUTO/ASK/BLOCK) → user modal.
 - Approval modal: Yes / Yes-always-for-`<binary>` / No.
 - Judge LLM is the main agent LLM with a tight classifier prompt.
-- Strict-mode default. Trusted mode is "Claude Code's `--dangerously-skip-permissions`".
+- Strict-mode default. Trusted mode bypasses every gate (no judge, no allowlist, no modal) — for throwaway projects only.
 
 **Onboarding** (Codex-style, single alt-screen program)
 - Trust → provider pick → API key (masked) → LLM model → image model → project init.

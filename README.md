@@ -37,7 +37,7 @@ Done. Saved as draft-1.png.
 
 Most content-creation workflows are death by a thousand chats: stitch a prompt, paste it into a chat UI, paste the result into another tool, lose track of which character looked like what. OpenMelon turns that into one persistent terminal: each project keeps your characters / reference scenes / generated artifacts on disk, and a tool-using agent (your LLM of choice + an image model) drafts inside that context.
 
-It's content's `claude-code` — same tool-loop architecture, same TUI vocabulary (slash commands, palette, approval modal), but pointed at image / multimodal output instead of code.
+The agent runs as a tool loop — the model can search your character / reference libraries, pull a portrait as an anchor image, compile a [skillplus](https://github.com/eight-acres-lab/skillplus) package for prompt structuring, and call the image model — all in one terminal session you can watch, interrupt, and resume.
 
 ## OpenMelon vs. direct image prompting
 
@@ -137,8 +137,7 @@ openmelon -p "<intent>"                    Headless one-shot (still tool-driven)
 The agent has a `bash` tool (read files, inspect images, check sizes, etc.). Every call is gated by a four-tier policy:
 
 ```
-Trusted mode      Run anything, no prompt. Like Claude Code's --dangerously-skip-permissions.
-                  Use for throwaway projects only.
+Trusted mode      Run anything, no prompt. Use for throwaway projects only.
 Auto-judge mode   Judge LLM auto-runs read-only inspection (file, ls, identify, du, grep, …).
                   Writes prompt; destructive commands (rm -rf, sudo, curl POST off-host) blocked.
 Strict (default)  Every bash needs your approval. Judge LLM only auto-blocks destructive ones.

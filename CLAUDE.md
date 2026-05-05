@@ -87,7 +87,7 @@ go install -ldflags "-X github.com/eight-acres-lab/openmelon/internal/version.Ve
 
 ## Architecture conventions
 
-- **Module path**: `github.com/eight-acres-lab/openmelon`. Do not reintroduce `github.com/Jackyffight/openmelon`.
+- **Module path**: `github.com/eight-acres-lab/openmelon`.
 
 - **Dep policy** (per package):
   - `internal/llm`, `internal/imagegen`, `internal/registry`, `internal/projectx`, `internal/userconfig`, `internal/runtime`, `internal/tools`, `internal/session`, `internal/search`: pure stdlib + net/http + encoding/json. No vendor SDKs. No YAML / CLI-parser deps.

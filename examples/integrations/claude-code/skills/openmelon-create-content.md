@@ -1,79 +1,82 @@
 ---
 name: create-vbox-content
-description: Generate a realistic V-Box-style post (image + structured output) from a one-sentence intent, using OpenMelon + Skill-Plus packages. Use when the user wants to create social content, food-exploration posts, lifestyle photos, or anything described in terms of "a real-feeling post about X". Do NOT use for code generation, debugging, or general Q&A.
+description: Generate a realistic V-Box-style post (image + structured output) from a one-sentence intent using OpenMelon. Use when the user wants to create social content, food-exploration posts, lifestyle photos, or anything described as "a real-feeling post about X". Do NOT use for code generation, debugging, or general Q&A.
 ---
 
 # Create V-Box content via OpenMelon
 
-You have access to `openmelon`, a content-creation agent CLI. It compiles a [Skill-Plus](https://github.com/eight-acres-lab/skillplus) package (a structured "creative recipe"), sends it to an LLM along with the user's intent, parses the structured response, generates an image with OpenAI's image API, and writes everything plus a provenance line to `.openmelon/artifacts/`.
+You have access to `openmelon`, a content-creation agent CLI. In headless `-p` mode it runs the same tool stack as its interactive TUI: a tool-using LLM that pulls characters / references / search results from the project's `.openmelon/` directory, compiles a [skillplus](https://github.com/eight-acres-lab/skillplus) package when relevant, and generates an image with the user's configured image model.
 
 ## When to use this skill
 
 Trigger this when the user asks for any of:
 
 - a realistic social-media post (food, travel, lifestyle, "phone snapshot" feel)
-- a "real探店" / 探店 / Xiaohongshu-style image
+- a 探店 / Xiaohongshu-style image
 - "make me a post about X" / "generate content for V-Box about X"
 - "create a fire-side / market / shop visit image"
 
-Do **not** trigger this for: code, documentation, generic Q&A, image generation that doesn't need a stabilized "skill-as-filter" — for raw image gen the user can call OpenAI's API directly.
+Do **not** trigger this for: code, documentation, generic Q&A, raw image gen with no skill needed (the user can call the image API directly).
+
+## Preconditions
+
+- `openmelon` on PATH. Verify with `which openmelon`. If missing, tell the user to `npm i -g @e8s/openmelon`.
+- `skillplus` on PATH. Verify with `which skillplus`. If missing: `npm i -g @e8s/skillplus`.
+- A configured project. Check `<cwd>/.openmelon/project.json`. If missing, tell the user to `cd` into a project directory or run `openmelon` once to walk the first-run wizard.
+- API key configured. Verify by `cat ~/.openmelon/credentials.json` exists. If not, tell the user to run `openmelon setup`.
 
 ## How to invoke
 
 Single command. Pass the user's intent verbatim (Chinese or English both work):
 
 ```bash
-openmelon -p "<the user's intent — keep it natural and complete>" \
-  --skill skillplus:food-street-realism
+openmelon -p "<the user's intent — keep it natural and complete>"
 ```
 
-Available skills (today):
-- `skillplus:food-street-realism` — street-food / shop-visit / "real-feeling" posts. Optimized for `gpt-image-family` model profile.
+The agent decides which characters / references / skills to pull on its own. If the user explicitly names a skill, append `--skill <slug>` (bare slug, no `skillplus:` prefix).
 
-If the user requests a different style, ask which skill to use; if no good fit exists, suggest using `food-street-realism` and noting that the skill catalogue is growing.
-
-## Optional flags worth knowing
+## Optional flags
 
 | Flag | When to use |
 |---|---|
-| `--llm openai` | force OpenAI for the LLM step (default `auto` picks Anthropic if both keys set) |
-| `--llm-model <id>` | override the LLM model |
-| `--image-model <id>` | override the image model (e.g. `dall-e-3` instead of `gpt-image-1`) |
-| `--locale <code>` | locale for skill content (default `zh-CN`) |
+| `--llm-model <id>` | override the LLM model for this run |
+| `--image-model <id>` | override the image model |
 | `--image=false` | structuring only — useful for previewing the prompt before paying for image gen |
-| `--json` | also print a structured summary to stdout (useful when chaining with other tools) |
+| `--json` | also print a structured summary to stdout (chain with other tools) |
+
+The provider, default model, and bash permission mode are read from the project's `project.json` and `~/.openmelon/config.json`. Don't pass flags the user didn't ask for.
 
 ## Output you'll see
 
-Streamed stderr while the LLM is generating:
+Activity log on stderr (turn-by-turn):
 
 ```
-[openmelon ...] skill=skillplus:food-street-realism llm=anthropic/claude-sonnet-4-6 image=openai/gpt-image-1
+[openmelon] project=ai-talks session=20260506-... llm=openrouter/openai/gpt-5.5 image=openrouter/google/gemini-2.5-flash-image
 [openmelon] intent: ...
-{"scene_interpretation":...,"generation_prompt":"...",...}
-[openmelon] skill compiled: food-street-realism@0.1.0
-[openmelon] generation prompt: ...
-[openmelon] image: .openmelon/artifacts/food-street-realism-20260504-203045.png (sha256=abc123def456)
-[openmelon] provenance: .openmelon/artifacts/provenance.jsonl
-[openmelon] duration: 24.3s
+[turn 1] reply (finish=tool_calls, tool_calls=2)
+[turn 1] → list_characters({"query":"..."})
+[turn 1] ← [{"slug":"...",...}]
+[turn 1] → generate_image({"prompt":"...","reference_images":["/.../portrait.png"]})
+[turn 1] ← {"path":".../draft-1.png","sha256":"..."}
+...
 ```
 
 After the command succeeds:
 
-1. Tell the user the artifact path so they can open the PNG.
-2. Quote 1-2 sentences of the `generation_prompt` so they see what the skill produced.
+1. Tell the user the image path under `.openmelon/sessions/<id>/`.
+2. Mention the resume id so they can continue: `openmelon resume <id>`.
 3. If they look happy, offer to publish via the `publish-vbox-content` skill.
 
 ## Failure modes
 
-- **No API key** — error mentions `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`. Tell the user which env var to set.
-- **`skillplus` not found** — they haven't `pip install skillplus`. Tell them.
-- **Skill not found** — message lists where it looked. Pass `--skill-root <dir>` if they keep packages somewhere unusual.
-- **Image generation timeout** — `gpt-image-1` can take 30-90s. The default timeout is 5 minutes; if hit, retry once.
-- **OpenAI returns content-policy block** — re-run with a less ambiguous intent. Don't force.
+- **No API key** — error says "run `openmelon setup`". Tell the user.
+- **`skillplus` not found** — they haven't installed it. `npm i -g @e8s/skillplus`.
+- **Bash unavailable in headless** — the agent tried to call bash but the project's bash mode is `strict`. Tell the user to run `openmelon` interactively, do `/settings → Auto-judge` (or Trusted), then retry.
+- **Image generation timeout** — image models can take 30-90s. The default timeout is 5 minutes; transient TLS / 5xx are retried 3 times automatically. If still failing, the user's network may have a middlebox issue.
+- **Content-policy block** — re-run with a less ambiguous intent. Don't force.
 
 ## Don't
 
-- Don't run with `--publish vbox` from this skill — it's for create only. The publish skill is separate so the user can review the image first.
-- Don't add ad-hoc flags the user didn't ask for. The defaults are tuned for the food-street-realism skill.
-- Don't summarize the streamed JSON output back to the user — show them the generation_prompt and the image path; that's the relevant signal.
+- Don't run with `--publish vbox` from this skill — it's create-only. The publish skill is separate so the user can review the image first.
+- Don't pass `--skill skillplus:<name>` — that prefix is the old format and the bare slug is what `skillplus` expects today.
+- Don't summarize the activity log back to the user — show them the session dir + the image path. That's the relevant signal.

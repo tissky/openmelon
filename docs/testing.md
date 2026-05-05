@@ -1,174 +1,173 @@
 # Testing OpenMelon end-to-end
 
-Recipe for verifying the openmelon ↔ skillplus ↔ vbox-cli chain locally before any of the three projects are released.
+Recipe for verifying the openmelon ↔ skillplus ↔ vbox-cli chain locally.
 
-This doc walks through three integration paths — pick whichever you have credentials for. Each path verifies a different audience:
+Three integration paths — pick whichever you have credentials for:
 
 | Path | Audience | Requires |
 |---|---|---|
-| **A**. Direct CLI | terminal users, scripts | one of `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` (LLM) + `OPENAI_API_KEY` (image) |
-| **B**. Direct CLI + V-Box publish | the full content-production loop | A's keys + `VBOX_API_KEY` + `vbox-cli` linked locally |
+| **A**. Interactive TUI | day-to-day creator workflow | API key for OpenRouter / OpenAI / Anthropic |
+| **B**. Headless `-p` + V-Box publish | scripts, sub-agent integration | A's keys + `VBOX_API_KEY` + `vbox-cli` linked locally |
 | **C**. Claude Code Skill | host-agent integration | A's keys + Claude Code installed |
-
-If you only have an OpenAI key, that's enough — OpenMelon will use GPT for the LLM step and `gpt-image-1` for the image step from the same key.
 
 ---
 
 ## Setup (once)
 
-### 1. Build openmelon
+### 1. Install openmelon + skillplus
 
 ```bash
-cd /Users/zhi/dev/e8s/openmelon
-go build -o /tmp/openmelon ./cmd/openmelon
-# or, for permanent install:
-go install github.com/eight-acres-lab/openmelon/cmd/openmelon
+npm install -g @e8s/openmelon @e8s/skillplus
 ```
 
-### 2. Install skillplus
+Or build from source (clone the repo first):
 
 ```bash
-# editable install into the workspace venv
-/Users/zhi/dev/.venv/bin/pip install -e /Users/zhi/dev/e8s/skillplus
-
-# verify the console script works
-PATH=/Users/zhi/dev/.venv/bin:$PATH skillplus --help | head -3
+cd path/to/openmelon
+go install -ldflags "-X github.com/eight-acres-lab/openmelon/internal/version.Version=$(git describe --tags --always)" ./cmd/openmelon
+cd path/to/skillplus && npm link
 ```
 
-### 3. (Path B only) Link vbox-cli locally
+### 2. (Path B only) Link vbox-cli locally
 
 ```bash
-cd /Users/zhi/dev/e8s/vbox-cli
-npm link        # exposes `vbox-cli` on PATH using the local checkout
-
-# verify
-vbox-cli --version    # should print 0.3.1
+cd path/to/vbox-cli
+npm link
+vbox-cli --version
 ```
 
-### 4. Set environment
+### 3. First-run wizard
 
-```bash
-# Pick whichever you have. Both work; both is best.
-export ANTHROPIC_API_KEY=sk-ant-...
-export OPENAI_API_KEY=sk-...
-
-# Path B only
-export VBOX_API_KEY=bcp_sk_...
-
-# Optional: route everything through an OpenAI-compatible relay
-# (LiteLLM, Helicone, ChatGPT-Plus relay, etc.)
-# export OPENAI_BASE_URL=https://your-relay.example.com
-```
+Just run `openmelon` in any directory. The wizard walks through trust → API key → LLM model → image model → project init. Credentials land in `~/.openmelon/credentials.json` (mode 0600), defaults in `~/.openmelon/config.json`.
 
 ---
 
-## Path A — direct CLI one-shot
+## Path A — Interactive TUI
 
-### A.1. The food-noodles demo (the canonical reference)
+### A.1. The food-noodles demo
 
 ```bash
-PATH=/Users/zhi/dev/.venv/bin:$PATH /tmp/openmelon \
-  -p "下班后在老小区楼下吃一碗牛肉面，想发一条真实的探店帖" \
-  --skill skillplus:food-street-realism
+cd ~/work/test-melon
+openmelon
 ```
 
-Expected sequence (token-streamed to stderr):
+Inside the TUI:
 
 ```
-[openmelon ...] skill=skillplus:food-street-realism llm=anthropic/claude-sonnet-4-6 image=openai/gpt-image-1
-[openmelon] intent: 下班后在老小区楼下吃一碗牛肉面...
-{"scene_interpretation":{"camera_position":"...","table_objects":[...],...},"generation_prompt":"...","negative_rules":[...],"failure_modes":[...]}
-[openmelon] skill compiled: food-street-realism@0.1.0
-[openmelon] generation prompt: A handheld phone snapshot inside a small old-neighborhood beef noodle shop, overhead fluorescent lighting, slight motion blur on the steam rising from a bowl of beef noodles...
-[openmelon] image: .openmelon/artifacts/food-street-realism-20260504-203045.png (sha256=abc123def456)
-[openmelon] provenance: .openmelon/artifacts/provenance.jsonl
-[openmelon] duration: 24.3s
+> /skill
+[picker → choose food-street-realism]
+(skill: food-street-realism) — applies to your next message
+
+> Grab a bowl of beef noodles after work, write an authentic restaurant-visit post
+```
+
+Expected sequence (rendered live in viewport):
+
+```
+  ⏺ compile_skill({"skill":"food-street-realism","locale":"zh-CN"})
+    ⎿ {"package":{"id":"food-street-realism",...},"compiled_prompt":"...",...}
+  ⏺ generate_image({"prompt":"A handheld phone snapshot inside...",...})
+    ⎿ {"path":".../draft-1.png","sha256":"abc123..."}
+
+⠋ Streaming response · 0:24 · 1.4k in / 312 out · esc to cancel
 ```
 
 ### A.2. Verify the artifact
 
-```bash
-ls -lh .openmelon/artifacts/
-open .openmelon/artifacts/food-street-realism-*.png    # macOS
+In the TUI:
 
-# inspect the provenance line
-tail -1 .openmelon/artifacts/provenance.jsonl | jq
+```
+> /settings
+[switch to "Auto-judge" so bash auto-runs read-only commands]
+
+> Open the image and tell me if it looks like a real phone photo
+```
+
+The agent calls `bash({"command":"file .openmelon/sessions/*/draft-1.png"})`, then `bash({"command":"open .openmelon/sessions/*/draft-1.png"})` — both auto-approved by the judge as read-only.
+
+Or outside the TUI:
+
+```bash
+ls -lh .openmelon/sessions/*/draft-1.png
+open .openmelon/sessions/*/draft-1.png
 ```
 
 ### A.3. Variations to try
 
-```bash
-# Different intent
-/tmp/openmelon -p "周末在大排档吃烧烤的快闪贴" --skill skillplus:food-street-realism
-
-# OpenAI-only (skip Anthropic):
-unset ANTHROPIC_API_KEY
-/tmp/openmelon -p "..." --skill skillplus:food-street-realism
-
-# Structuring only — preview the prompt before paying for image gen:
-/tmp/openmelon -p "..." --skill skillplus:food-street-realism --image=false --json
-
-# Force a different LLM model:
-/tmp/openmelon -p "..." --llm-model claude-opus-4-7
-
-# Force a different image model:
-/tmp/openmelon -p "..." --image-model dall-e-3
+```
+> /model            # switch the LLM mid-session (e.g. claude-opus-4.7)
+> /model-image      # switch the image model (e.g. gpt-5-image)
+> /clear            # forget conversation history
+> /save out.jsonl   # export the conversation
+> /history          # print the message log
+> /exit
 ```
 
-### A.4. Things to look for
+### A.4. Resume a session
 
-✅ Streaming JSON appears word-by-word in stderr (not silent for 30s)
-✅ Image opens and looks like a real phone snapshot, not a magazine shot
-✅ Provenance line includes `skill`, `llm`, `image`, `intent`, `duration_ms`, image `sha256`
-✅ Same intent + same skill produces *similar but not identical* output (temperature 0.2 is fairly tight)
+After exit, the shell prints:
 
-❌ If the image looks staged / commercial: the model isn't following the negative rules. Re-run; if persistent, the model_profile prompt overlay needs tuning (file an issue).
-❌ If the JSON parsing fails: model didn't follow the schema; check stderr for the raw response.
+```
+session saved at /path/to/.openmelon/sessions/20260506-101203-a1b2c3d4
+to resume:    openmelon resume 20260506-101203-a1b2c3d4
+```
+
+Then:
+
+```bash
+openmelon resume                            # list recent + pick id
+openmelon resume 20260506-101203-a1b2c3d4   # load directly
+```
+
+The new TUI renders prior turns into the transcript and continues with full context.
 
 ---
 
-## Path B — direct CLI + V-Box publish
+## Path B — Headless `-p` + V-Box publish
 
-After Path A produces an image you like:
+`-p` runs the same tool stack without the TUI. Useful for scripts.
 
-### B.1. One-command create + publish
+### B.1. One-shot create
 
 ```bash
-PATH=/Users/zhi/dev/.venv/bin:$PATH /tmp/openmelon \
-  -p "下班后在老小区楼下吃一碗牛肉面，想发一条真实的探店帖" \
-  --skill skillplus:food-street-realism \
-  --publish vbox
+cd ~/work/test-melon
+openmelon -p "Grab a bowl of beef noodles after work, write an authentic restaurant-visit post"
 ```
 
-Expected additional lines after the create flow:
+Expected stderr (the activity log):
+
+```
+[openmelon] project=test-melon session=20260506-... llm=openrouter/openai/gpt-5.5 image=openrouter/google/gemini-2.5-flash-image
+[openmelon] intent: Grab a bowl of beef noodles...
+[turn 1] reply (finish=tool_calls, tool_calls=1)
+[turn 1] → compile_skill(...)
+[turn 1] ← {"package":{...},...}
+...
+```
+
+### B.2. Headless + V-Box publish
+
+```bash
+openmelon -p "..." --publish vbox
+```
+
+Expected additional lines:
 
 ```
 [openmelon] uploaded → fid=fid_xxx
 [openmelon] published. vbox-cli response: {"status":"queued_for_review","content_id":"post_xxx"}
 ```
 
-`queued_for_review` is **expected** — the post action is gated by V-Box's Review Queue. You approve it in the V-Box app to make it live.
+`queued_for_review` is **expected** — the post is gated by V-Box's Review Queue. Approve it in the V-Box app to make it live.
 
-### B.2. Two-step (manual review between)
+### B.3. Headless + bash
+
+The bash tool in headless requires `/settings → trusted` (or `auto`) — no UI to render the approval modal. Set the mode interactively first:
 
 ```bash
-# Create
-/tmp/openmelon -p "..." --skill skillplus:food-street-realism
-
-# Inspect the image
-open .openmelon/artifacts/food-street-realism-*.png
-
-# When happy: upload + post manually
-fid=$(vbox-cli upload --file .openmelon/artifacts/food-street-realism-*.png --category image | jq -r .fid)
-vbox-cli post --text "下班吃了一碗牛肉面" --media-fid "$fid"
+openmelon                          # in TUI: /settings → Trusted, then /exit
+openmelon -p "Inspect generated images and report sizes"   # bash now runs
 ```
-
-### B.3. Things to look for
-
-✅ Upload returns a `fid` starting with `fid_`
-✅ Post returns status `queued_for_review` (not `rejected`)
-✅ Post appears in the V-Box app's Review Queue, attached to the right image
-✅ After approving in-app, the post goes live with the image visible
 
 ---
 
@@ -178,18 +177,13 @@ vbox-cli post --text "下班吃了一碗牛肉面" --media-fid "$fid"
 
 ```bash
 mkdir -p ~/.claude/skills
-cp /Users/zhi/dev/e8s/openmelon/examples/integrations/claude-code/skills/openmelon-create-content.md ~/.claude/skills/
-cp /Users/zhi/dev/e8s/openmelon/examples/integrations/claude-code/skills/openmelon-publish.md       ~/.claude/skills/
+cp path/to/openmelon/examples/integrations/claude-code/skills/openmelon-create-content.md ~/.claude/skills/
+cp path/to/openmelon/examples/integrations/claude-code/skills/openmelon-publish.md       ~/.claude/skills/
 ```
 
 ### C.2. Verify openmelon is on PATH for Claude Code
 
-Claude Code inherits PATH from the shell that launched it. If you used `go build -o /tmp/openmelon`, either:
-
-- copy the binary somewhere on PATH: `cp /tmp/openmelon ~/bin/openmelon`
-- or use `go install`: `go install github.com/eight-acres-lab/openmelon/cmd/openmelon` (puts it in `$GOPATH/bin`)
-
-Same for `skillplus` — make sure the venv's bin is on PATH or pip-install globally.
+Claude Code inherits PATH from the shell that launched it. After `npm install -g @e8s/openmelon`, `which openmelon` should resolve. If you `go install`-ed, ensure `$GOPATH/bin` is on PATH.
 
 ### C.3. Test from inside Claude Code
 
@@ -197,77 +191,40 @@ In a Claude Code conversation:
 
 > Use openmelon to create a realistic post about eating beef noodles at an old-neighborhood shop downstairs.
 
-Expected: Claude Code reads the Skill, recognizes the intent matches, runs `openmelon -p "..." --skill skillplus:food-street-realism` in its terminal, surfaces the streamed output, and reports the artifact path back into the conversation.
+Expected: Claude Code reads the Skill, recognizes the intent matches, runs `openmelon -p "..."` in its terminal, surfaces the streamed activity log, and reports the artifact path back into the conversation.
 
 Then:
 
 > Now publish that image to my V-Box account.
 
-Expected: Claude Code reads the publish Skill, runs `vbox-cli upload ...` then `vbox-cli post --media-fid ...`, surfaces the `queued_for_review` response.
-
-### C.4. Things to look for
-
-✅ Claude Code surfaces "I'll use the create-vbox-content skill" or similar
-✅ The streamed openmelon output appears in Claude Code's view as it generates
-✅ Claude Code reports the image path; you can open it directly
-✅ Publishing is a separate decision — Claude Code waits for you to approve before running the publish Skill
-
-❌ If Claude Code doesn't recognize the intent: check `~/.claude/skills/openmelon-create-content.md` exists and the description matches the intent's wording (zh-CN intents may need a Chinese description line — open an issue if so).
-❌ If Claude Code can't find the binary: PATH issue. Run `which openmelon skillplus vbox-cli` in the same shell that launched Claude Code.
+Expected: Claude Code runs `vbox-cli upload ...` then `vbox-cli post --media-fid ...`, surfaces the `queued_for_review` response.
 
 ---
 
 ## Smoke checks (no API keys)
 
-If you don't have keys yet, you can still verify the code paths work:
-
 ```bash
-# Build
-go build -o /tmp/openmelon ./cmd/openmelon
+# CLI works
+openmelon help
 
-# Help text
-/tmp/openmelon
+# First-run wizard appears (you can Esc out at any step)
+mkdir -p /tmp/smoke && cd /tmp/smoke && openmelon
 
-# Workflow mode (legacy 0.1) with the bundled food-exploration project
-# Note: this needs the skillplus binary on PATH AND a valid relative path
-# to the food-street-realism example. The bundled example uses a path
-# that assumes the workspace layout — if you've moved things, the
-# project.json needs updating.
-PATH=/Users/zhi/dev/.venv/bin:$PATH /tmp/openmelon \
-  --project examples/food-exploration/project.json \
-  --compiler /Users/zhi/dev/e8s/skillplus/src
+# Sessions list works on existing project
+openmelon resume
 
-# Agent mode without keys (verifies the friendly error message)
-unset ANTHROPIC_API_KEY OPENAI_API_KEY OPENROUTER_API_KEY
-/tmp/openmelon -p "test" --skill skillplus:food-street-realism
-# → "llm: --llm=auto could not pick a provider — set one of ..."
+# Search a project's libraries (returns nothing on a fresh project, that's fine)
+openmelon search "tag:character"
 
-# Test the full chain with fake keys (compile succeeds, LLM returns 401)
-ANTHROPIC_API_KEY="sk-ant-fake" PATH=/Users/zhi/dev/.venv/bin:$PATH \
-  /tmp/openmelon -p "test" --skill skillplus:food-street-realism --image=false
-# → reaches Anthropic, returns "HTTP 401: ... invalid x-api-key"
+# Friendly error when no key is configured
+openmelon -p "test"
+# → "no API key for openrouter — run `openmelon setup` to configure"
 ```
 
 ---
 
-## Cost ballpark (with real keys)
+## Known limitations (defer to later releases)
 
-| Step | Vendor | Approx. cost per run |
-|---|---|---|
-| LLM structuring (1.1k token system + ~50 token user → ~500 token JSON) | Anthropic Sonnet 4.6 | $0.005 |
-| LLM structuring | OpenAI GPT-5 | $0.01-0.02 |
-| Image generation (1024×1024) | OpenAI gpt-image-1 | $0.04 |
-| **Per run total** | | **$0.05–$0.06** |
-
-20 test runs ≈ $1. Fine for development.
-
----
-
-## What's not yet testable (defer)
-
-These are 0.3 / 0.4 work, no test recipe yet:
-
-- REPL mode (`openmelon` with no args) — bubbletea TUI not built
-- TUI scene picker for multi-candidate `scene_interpretation` outputs
-- HTTP serve mode for V-Box backend embedding
-- More skill packages (today only food-street-realism; vendor model profiles for openai/google/xai planned)
+- Anthropic provider doesn't yet implement `ToolCaller.Chat` — picking Anthropic in the auth wizard works for legacy `-p --skill` mode but the TUI's tool-driven runtime needs OpenAI or OpenRouter. (0.4 will close this.)
+- `compile_skill` shells to `skillplus` so the binary must be on PATH. `npm i -g @e8s/skillplus` handles this.
+- No `edit_image` tool yet — to refine, ask the agent to call `generate_image` again with the prior generation passed as a reference. (0.4.)
