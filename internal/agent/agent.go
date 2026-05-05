@@ -109,6 +109,7 @@ type RunResult struct {
 	Compiled         json.RawMessage `json:"-"` // verbose; not in summary JSON
 	Structured       json.RawMessage `json:"structured"`
 	GenerationPrompt string          `json:"generation_prompt,omitempty"`
+	ArtifactPath     string          `json:"artifact_path,omitempty"`
 	ImagePath        string          `json:"image_path,omitempty"`
 	ImageSHA256      string          `json:"image_sha256,omitempty"`
 	ProvenancePath   string          `json:"provenance_path"`
@@ -218,7 +219,8 @@ func (a *Agent) RunOneShot(ctx context.Context, in RunInput) (*RunResult, error)
 		StartedAt:    startedAt,
 	}
 
-	// 5. Optional image generation.
+	// 5. Optional image generation; always persist structured output as artifact.
+	ts := startedAt.Format("20060102-150405")
 	if genPrompt, ok := structured["generation_prompt"].(string); ok && genPrompt != "" {
 		result.GenerationPrompt = genPrompt
 		if a.ImageGen != nil {
@@ -229,15 +231,22 @@ func (a *Agent) RunOneShot(ctx context.Context, in RunInput) (*RunResult, error)
 			if err != nil {
 				return result, fmt.Errorf("image generation: %w", err)
 			}
-			ts := startedAt.Format("20060102-150405")
 			imgPath := filepath.Join(in.OutputDir, fmt.Sprintf("%s-%s.png", skillID, ts))
 			if err := os.WriteFile(imgPath, img.Data, 0o644); err != nil {
 				return result, fmt.Errorf("write image: %w", err)
 			}
 			sum := sha256.Sum256(img.Data)
 			result.ImagePath = imgPath
+			result.ArtifactPath = imgPath
 			result.ImageSHA256 = hex.EncodeToString(sum[:])
 		}
+	} else {
+		// Text-only skill: persist structured JSON as artifact.
+		artPath := filepath.Join(in.OutputDir, fmt.Sprintf("%s-%s.json", skillID, ts))
+		if err := os.WriteFile(artPath, structuredJSON, 0o644); err != nil {
+			return result, fmt.Errorf("write artifact: %w", err)
+		}
+		result.ArtifactPath = artPath
 	}
 
 	result.FinishedAt = time.Now().UTC()
@@ -289,14 +298,16 @@ func (a *Agent) resolveSkillSpec(spec, searchRoot string) (string, error) {
 
 		var tried []string
 		for _, root := range roots {
-			candidate := filepath.Join(root, "examples", name+".skillplus")
-			tried = append(tried, candidate)
-			if info, err := os.Stat(candidate); err == nil && info.IsDir() {
-				abs, err := filepath.Abs(candidate)
-				if err == nil {
-					return abs, nil
+			for _, subdir := range []string{"examples", "skills"} {
+				candidate := filepath.Join(root, subdir, name+".skillplus")
+				tried = append(tried, candidate)
+				if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+					abs, err := filepath.Abs(candidate)
+					if err == nil {
+						return abs, nil
+					}
+					return candidate, nil
 				}
-				return candidate, nil
 			}
 		}
 		return "", fmt.Errorf("skill %q not found.\nLooked in:\n  %s\nPass --skill-root <dir-containing-examples/>, or set $SKILLPLUS_EXAMPLES_ROOT", spec, strings.Join(tried, "\n  "))

@@ -18,18 +18,18 @@ openmelon · ai-talks · openrouter:openai/gpt-5.5 · img:openrouter:openai/gpt-
 session 20260506-101203-a1b2c3d4
 Type a request and press ↵. /help for commands. Esc cancels a turn; Ctrl+C twice to quit.
 
-> 老王在夜市烤羊肉串，霓虹灯反光
+> Lao Wang grilling lamb skewers at the night market, neon reflections
 
-  ⏺ list_characters({"query":"老王"})
-    ⎿ [{"slug":"lao-wang","name":"老王",...}]
+  ⏺ list_characters({"query":"lao wang"})
+    ⎿ [{"slug":"lao-wang","name":"Lao Wang",...}]
   ⏺ get_character({"slug":"lao-wang"})
     ⎿ {"image_paths":["/.../portrait.png"],...}
 
-正在生成
+Drafting the scene now.
   ⏺ generate_image({"prompt":"...","reference_images":["/.../portrait.png"]})
     ⎿ {"path":".../draft-1.png","sha256":"..."}
 
-完成。
+Done. Saved as draft-1.png.
 ⠋ Streaming response · 0:34 · 1.4k in / 312 out · esc to cancel
 ```
 
@@ -38,6 +38,28 @@ Type a request and press ↵. /help for commands. Esc cancels a turn; Ctrl+C twi
 Most content-creation workflows are death by a thousand chats: stitch a prompt, paste it into a chat UI, paste the result into another tool, lose track of which character looked like what. OpenMelon turns that into one persistent terminal: each project keeps your characters / reference scenes / generated artifacts on disk, and a tool-using agent (your LLM of choice + an image model) drafts inside that context.
 
 It's content's `claude-code` — same tool-loop architecture, same TUI vocabulary (slash commands, palette, approval modal), but pointed at image / multimodal output instead of code.
+
+## OpenMelon vs. direct image prompting
+
+**All images below are one-shot outputs from the same image model: `google/gemini-2.5-flash-image`.** The only difference is the prompt path: direct prompting sends the original intent straight to the image model, while OpenMelon runs the same intent through the `skillplus → LLM → image` pipeline first, expanding it into a richer generation prompt before that single image-generation call.
+
+<table>
+  <tr>
+    <th>Intent</th>
+    <th>Direct prompt</th>
+    <th>With OpenMelon</th>
+  </tr>
+  <tr>
+    <td><code>Grab a bowl of beef noodles after work and write an authentic restaurant-visit post.</code></td>
+    <td><img src="assets/examples/beef-ori.jpg" alt="Direct prompt result for a beef noodle shop post" width="320" /></td>
+    <td><img src="assets/examples/beef-open.jpg" alt="OpenMelon result for a beef noodle shop post" width="320" /></td>
+  </tr>
+  <tr>
+    <td><code>A cozy wooden cabin with warm lights, surrounded by a snowy pine forest at dusk.</code></td>
+    <td><img src="assets/examples/snow-ori.jpg" alt="Direct prompt result for a snowy cabin" width="320" /></td>
+    <td><img src="assets/examples/snow-open.jpg" alt="OpenMelon result for a snowy cabin" width="320" /></td>
+  </tr>
+</table>
 
 ## Install
 
@@ -183,3 +205,7 @@ Headless `openmelon -p "..."` runs the same tool stack, just without the TUI —
 ## License
 
 [Apache 2.0](LICENSE).
+
+## Friendly Links
+
+- [LINUX DO](https://linux.do/) — This open-source project recognizes and links to the LINUX DO community.
