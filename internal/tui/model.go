@@ -34,6 +34,7 @@ import (
 	"github.com/eight-acres-lab/openmelon/internal/projectx"
 	"github.com/eight-acres-lab/openmelon/internal/runtime"
 	"github.com/eight-acres-lab/openmelon/internal/session"
+	"github.com/eight-acres-lab/openmelon/internal/skillplus"
 	"github.com/eight-acres-lab/openmelon/internal/tools"
 )
 
@@ -49,6 +50,7 @@ const (
 	stateImageModelCustom  // /model-image → "Custom..." → typing
 	stateApprovalPending   // bash tool waiting on user confirmation
 	stateSettings          // /settings — bash permission picker
+	stateSkillSelect       // /skill — pick a skillplus package
 )
 
 // Model is the Bubbletea Model. Constructed by Run() and never used
@@ -130,6 +132,14 @@ type Model struct {
 	// via `openmelon resume`. Shown in the banner; used in the exit
 	// hint footer.
 	resumedFrom string
+
+	// Active skillplus selection. activeSkill is the slug picked via
+	// /skill; the next user submit prepends a hint instructing the
+	// model to compile_skill it. Cleared on /skill clear.
+	activeSkill   string
+	skillList     []skillplus.SkillInfo
+	skillCursor   int
+	skillLoadErr  string // set when ListSkills failed; rendered in picker
 }
 
 // slashCommand is one row in the slash palette.
@@ -142,6 +152,7 @@ type slashCommand struct {
 // REPL. Order shown in the palette is the order here.
 var slashCommands = []slashCommand{
 	{"/help", "show this list of commands"},
+	{"/skill", "pick a skillplus package for the next message"},
 	{"/model", "switch the LLM model for this session"},
 	{"/model-image", "switch the image-generation model"},
 	{"/settings", "open the settings panel (bash permissions, etc.)"},
@@ -258,10 +269,9 @@ func newModel(init modelInit) *Model {
 
 // Init starts the spinner ticker and shows the welcome banner.
 func (m *Model) Init() tea.Cmd {
-	m.appendLine(styleHelp.Render(fmt.Sprintf(
-		"openmelon · project %s · session %s",
-		m.project.ID, shortSession(m.session.Dir),
-	)))
+	// The persistent identity row is now the top header (see View),
+	// so the transcript only needs the per-launch hints.
+	m.appendLine(styleHelp.Render("session " + shortSession(m.session.Dir)))
 	if m.resumedFrom != "" {
 		m.appendLine(styleHelp.Render("resumed from " + m.resumedFrom))
 	}
@@ -334,6 +344,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.state == stateSettings {
 			m.updateSettings(msg)
+			return m, tea.Batch(cmds...)
+		}
+		if m.state == stateSkillSelect {
+			m.updateSkillSelect(msg)
 			return m, tea.Batch(cmds...)
 		}
 		// Selector states own all key input until they exit.
@@ -545,6 +559,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 //   5. status line — project + model only, no key hints
 func (m *Model) View() string {
 	var b strings.Builder
+	// Fixed header — top-left. Project + model identity stays anchored
+	// here regardless of terminal size or scroll position. Replaces
+	// the old bottom status bar.
+	b.WriteString(m.headerLine())
+	b.WriteString("\n")
 	b.WriteString(m.viewport.View())
 	b.WriteString("\n")
 
@@ -563,6 +582,8 @@ func (m *Model) View() string {
 		b.WriteString(m.renderApproval())
 	case stateSettings:
 		b.WriteString(m.renderSettings())
+	case stateSkillSelect:
+		b.WriteString(m.renderSkillSelect())
 	case stateModelSelect, stateImageModelSelect:
 		b.WriteString(m.renderSelector())
 	case stateModelCustom, stateImageModelCustom:
@@ -571,8 +592,6 @@ func (m *Model) View() string {
 		b.WriteString(m.textarea.View())
 		b.WriteString("\n")
 	}
-
-	b.WriteString(m.statusLine())
 	return b.String()
 }
 
@@ -685,6 +704,15 @@ func (m *Model) recomputeLayout() {
 		overlayRows = body + 9
 	case stateSettings:
 		overlayRows = 12 // header + desc + 3 mode rows + footer + spacing
+	case stateSkillSelect:
+		rows := len(m.skillList) + 1 // skills + "(none)"
+		if rows < 2 {
+			rows = 2
+		}
+		if rows > 12 {
+			rows = 12
+		}
+		overlayRows = rows + 5 // header + desc + rows + footer
 	case stateModelSelect, stateImageModelSelect:
 		overlayRows = len(m.modelSelectorRows()) + 5 // header+desc+blank+rows+blank+footer
 	case stateModelCustom, stateImageModelCustom:
@@ -693,9 +721,9 @@ func (m *Model) recomputeLayout() {
 	if overlayRows > 0 {
 		taLines = 0
 	}
-	const statusRows = 1
+	const headerRows = 1
 	const spacingRows = 1 // newline between viewport and the rest
-	vpHeight := m.height - taLines - overlayRows - paletteRows - statusRows - spacingRows
+	vpHeight := m.height - taLines - overlayRows - paletteRows - headerRows - spacingRows
 	if vpHeight < 5 {
 		vpHeight = 5
 	}
@@ -844,7 +872,20 @@ func (m *Model) submit(text string) tea.Cmd {
 	m.activityText = "Sending to " + m.llmModel
 	m.promptTokens = 0
 	m.completionTokens = 0
-	in := runtime.RunInput{UserInput: text}
+
+	// Active skill: prepend a hint so the model invokes compile_skill
+	// for that package before responding. We consume the selection
+	// here — one /skill pick → one applied message; clear it after
+	// so the next turn isn't surprise-bound to the same skill.
+	userInput := text
+	if m.activeSkill != "" {
+		userInput = fmt.Sprintf(
+			"Use the skillplus skill %q for this request — call compile_skill first to fetch its prompt + output schema, then proceed.\n\n%s",
+			m.activeSkill, text,
+		)
+		m.activeSkill = ""
+	}
+	in := runtime.RunInput{UserInput: userInput}
 	if len(m.history) == 0 {
 		in.SystemPrompt = m.systemPrompt
 	} else {
@@ -888,6 +929,27 @@ func (m *Model) handleSlash(line string) tea.Cmd {
 	case "/settings", "/config":
 		m.openSettings()
 		return nil
+	case "/skill":
+		// /skill                → open picker
+		// /skill clear / off    → unset active skill
+		// /skill <id>           → set active skill directly
+		if len(parts) == 1 {
+			m.openSkillSelector()
+			return nil
+		}
+		arg := parts[1]
+		if arg == "clear" || arg == "off" || arg == "none" {
+			if m.activeSkill == "" {
+				m.appendLine(styleHelp.Render("(no active skill)"))
+			} else {
+				m.appendLine(styleHelp.Render("(skill cleared: " + m.activeSkill + ")"))
+				m.activeSkill = ""
+			}
+			return nil
+		}
+		m.activeSkill = arg
+		m.appendLine(styleHelp.Render("(skill: " + arg + ")"))
+		return nil
 	case "/clear":
 		m.history = nil
 		m.persistedUpTo = 0
@@ -925,19 +987,18 @@ func (m *Model) cancelCurrentTurn(reason string) {
 	m.appendLine(styleWarn.Render("[" + reason + "]"))
 }
 
-// statusLine renders the bottom bar — just project + model context.
-// Key bindings (↵, ⇧↵, esc, ctrl+c) are intentionally omitted: experienced
-// CLI users know them, and surfacing them on every frame is noise.
-// `/help` inside the input shows the full command list when needed.
-func (m *Model) statusLine() string {
-	left := m.project.ID
+// headerLine renders the top-of-screen identity bar — project + active
+// LLM + active image model. Replaces the old bottom status row so this
+// info stays anchored at the top-left like the user's terminal title.
+func (m *Model) headerLine() string {
+	parts := []string{"openmelon", m.project.ID}
 	if m.llmTag != "" {
-		left += " · " + m.llmTag
+		parts = append(parts, m.llmTag)
 	}
 	if m.imageTag != "" {
-		left += " · img:" + m.imageTag
+		parts = append(parts, "img:"+m.imageTag)
 	}
-	return styleStatusBar.Render(left)
+	return styleStatusBar.Render(strings.Join(parts, " · "))
 }
 
 // --- rendering helpers ---
@@ -1360,6 +1421,125 @@ func (m *Model) answerApproval(approved, always bool) {
 		m.activityText = "Bash denied"
 	}
 	m.recomputeLayout()
+}
+
+// =====================================================================
+// Skill picker (/skill)
+// =====================================================================
+
+func (m *Model) openSkillSelector() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	skills, err := skillplus.ListSkills(ctx)
+	if err != nil {
+		m.skillLoadErr = err.Error()
+	} else {
+		m.skillLoadErr = ""
+	}
+	m.skillList = skills
+	m.skillCursor = 0
+	for i, s := range skills {
+		if s.ID == m.activeSkill {
+			m.skillCursor = i
+			break
+		}
+	}
+	m.state = stateSkillSelect
+	m.recomputeLayout()
+}
+
+func (m *Model) updateSkillSelect(msg tea.KeyMsg) {
+	max := len(m.skillList) // last row = "(none)"
+	switch msg.String() {
+	case "esc", "ctrl+c":
+		m.state = stateIdle
+		m.recomputeLayout()
+		return
+	case "up", "k":
+		if m.skillCursor > 0 {
+			m.skillCursor--
+		}
+	case "down", "j":
+		if m.skillCursor < max {
+			m.skillCursor++
+		}
+	case "enter":
+		m.commitSkillPick()
+	}
+	if len(msg.String()) == 1 && msg.String()[0] >= '1' && msg.String()[0] <= '9' {
+		n := int(msg.String()[0] - '1')
+		if n <= max {
+			m.skillCursor = n
+			m.commitSkillPick()
+		}
+	}
+}
+
+func (m *Model) commitSkillPick() {
+	if m.skillCursor == len(m.skillList) {
+		// "(none)" — clear selection.
+		if m.activeSkill != "" {
+			m.appendLine(styleHelp.Render("(skill cleared: " + m.activeSkill + ")"))
+			m.activeSkill = ""
+		}
+	} else if m.skillCursor < len(m.skillList) {
+		picked := m.skillList[m.skillCursor]
+		m.activeSkill = picked.ID
+		m.appendLine(styleHelp.Render("(skill: " + picked.ID + ") — applies to your next message"))
+	}
+	m.state = stateIdle
+	m.recomputeLayout()
+}
+
+func (m *Model) renderSkillSelect() string {
+	var b strings.Builder
+	b.WriteString(headerStyle.Render("Select a skillplus package"))
+	b.WriteString("\n")
+	b.WriteString(styleHelp.Render("Picked skill is applied to your next message — the model is told to compile_skill it before responding. Pick (none) to clear."))
+	b.WriteString("\n\n")
+	if m.skillLoadErr != "" {
+		b.WriteString(styleErr.Render("error listing skills: " + m.skillLoadErr))
+		b.WriteString("\n\n")
+	}
+	rows := append([]skillplus.SkillInfo(nil), m.skillList...)
+	for i, s := range rows {
+		marker := "  "
+		num := fmt.Sprintf("%d.", i+1)
+		title := s.ID
+		check := ""
+		if s.ID == m.activeSkill {
+			check = " ✓"
+		}
+		if i == m.skillCursor {
+			marker = stylePromptArrow.Render("› ")
+			num = stylePaletteActive.Render(num)
+			title = stylePaletteActive.Render(title + check)
+		} else {
+			title = title + check
+		}
+		desc := s.Description
+		if len(desc) > 80 {
+			desc = desc[:80] + "…"
+		}
+		fmt.Fprintf(&b, "%s%s %-28s %s\n", marker, num, title, styleHelp.Render(desc))
+	}
+	// "(none)" row.
+	{
+		i := len(rows)
+		marker := "  "
+		num := fmt.Sprintf("%d.", i+1)
+		title := "(none)"
+		if i == m.skillCursor {
+			marker = stylePromptArrow.Render("› ")
+			num = stylePaletteActive.Render(num)
+			title = stylePaletteActive.Render(title)
+		}
+		fmt.Fprintf(&b, "%s%s %-28s %s\n", marker, num, title, styleHelp.Render("don't apply any skill"))
+	}
+	b.WriteString("\n")
+	b.WriteString(styleHelp.Render("Enter to confirm · Esc to cancel · 1-N shortcut"))
+	b.WriteString("\n")
+	return b.String()
 }
 
 // =====================================================================

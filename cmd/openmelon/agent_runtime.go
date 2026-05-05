@@ -55,12 +55,19 @@ func runAgentInProject(ctx context.Context, opts agentOpts, workdir string) erro
 		imageProvider = "openrouter"
 	}
 
-	llmClient, err := llm.New(llmProvider, "", opts.llmBaseURL, llmModel)
+	// Pull credentials from the same place the TUI does
+	// (project credentials.json → global → env). Keeps `-p` and the
+	// interactive REPL using the same key source.
+	apiKey := ""
+	if llmProvider != "auto" {
+		apiKey, _ = userconfig.ResolveAPIKey(workdir, llmProvider)
+	}
+	llmClient, err := llm.New(llmProvider, apiKey, opts.llmBaseURL, llmModel)
 	if err != nil {
 		switch {
 		case errors.Is(err, llm.ErrNoAPIKey):
-			return fmt.Errorf("no API key for %s — set %s in your environment",
-				llmProvider, envVarFor(llmProvider))
+			return fmt.Errorf("no API key for %s — run `openmelon setup` to configure",
+				llmProvider)
 		case errors.Is(err, llm.ErrModelRequired):
 			return fmt.Errorf("--llm-model is required (or set defaults.llm_model in project.json)")
 		}
@@ -73,7 +80,8 @@ func runAgentInProject(ctx context.Context, opts agentOpts, workdir string) erro
 
 	var imgGen imagegen.Generator
 	if opts.imageEnabled {
-		imgGen, err = imagegen.New(imageProvider, "", opts.imageBaseURL, imageModel)
+		imgKey, _ := userconfig.ResolveAPIKey(workdir, imageProvider)
+		imgGen, err = imagegen.New(imageProvider, imgKey, opts.imageBaseURL, imageModel)
 		if err != nil {
 			switch {
 			case errors.Is(err, imagegen.ErrNoAPIKey):
@@ -96,7 +104,12 @@ func runAgentInProject(ctx context.Context, opts agentOpts, workdir string) erro
 	}
 	defer sess.Close()
 
-	// Build the tool registry around the project + session.
+	// Build the tool registry around the project + session. The
+	// headless `-p` path runs the same tool stack as the TUI: judge
+	// LLM is wired so /settings:trusted/auto modes auto-run safe
+	// commands without prompting (no UI here to prompt). Bash in
+	// strict mode without an Approve func will error per-call —
+	// switch to /settings → trusted (or auto) for headless bash use.
 	reg := tools.NewRegistry()
 	tools.RegisterAll(reg, &tools.Env{
 		Workdir:    workdir,
@@ -104,6 +117,8 @@ func runAgentInProject(ctx context.Context, opts agentOpts, workdir string) erro
 		SessionDir: sess.Dir,
 		Compiler:   &skillplus.Compiler{CompilerPath: opts.compilerPath},
 		ImageGen:   imgGen,
+		JudgeBash:  tools.JudgeBashWithLLM(tc),
+		BashMode:   string(proj.Settings.EffectiveBashMode()),
 	})
 
 	rt := &runtime.Runtime{
