@@ -231,31 +231,41 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// open — otherwise these keys fall through to the textarea
 		// (Up/Down would normally move the cursor in multi-line input).
 		if m.state == stateIdle && m.paletteVisible {
-			if msg.String() == "up" {
+			switch msg.String() {
+			case "up":
 				if m.paletteCursor > 0 {
 					m.paletteCursor--
 				}
 				return m, nil
-			}
-			if msg.String() == "down" {
+			case "down":
 				if filt := m.paletteFiltered(); m.paletteCursor < len(filt)-1 {
 					m.paletteCursor++
 				}
 				return m, nil
-			}
-			if msg.String() == "tab" {
+			case "tab":
+				// Tab autocompletes to the selected command + a trailing
+				// space so the user can immediately type args.
 				filt := m.paletteFiltered()
 				if len(filt) > 0 {
-					// Replace textarea with selected command + space
-					// so the user can tack on args (e.g. `/save foo.jsonl`).
 					m.textarea.SetValue(filt[m.paletteCursor].name + " ")
 					m.textarea.SetCursor(len(m.textarea.Value()))
-					// Dismiss the palette since the command is now
-					// fully typed.
 					m.paletteVisible = false
 					m.recomputeLayout()
 				}
 				return m, nil
+			case "enter":
+				// Enter executes the highlighted command directly.
+				// (No args path — for that, use Tab to autocomplete,
+				// type args, then Enter.)
+				filt := m.paletteFiltered()
+				if len(filt) == 0 {
+					return m, nil // nothing to select
+				}
+				cmd := filt[m.paletteCursor].name
+				m.paletteVisible = false
+				m.textarea.Reset()
+				m.recomputeLayout()
+				return m, m.submit(cmd)
 			}
 		}
 
@@ -373,14 +383,12 @@ func (m *Model) View() string {
 // --- helpers ---
 
 // resize handles tea.WindowSizeMsg — store the new size, then recompute
-// all dependent dimensions.
+// all dependent dimensions. recomputeLayout calls refreshViewport
+// internally, which re-pads the transcript at the new viewport height.
 func (m *Model) resize(w, h int) {
 	m.width = w
 	m.height = h
 	m.recomputeLayout()
-	// Re-render any stored transcript at the new width.
-	m.viewport.SetContent(m.transcript.String())
-	m.viewport.GotoBottom()
 }
 
 // recomputeLayout sizes the viewport + textarea based on (a) terminal
@@ -427,6 +435,10 @@ func (m *Model) recomputeLayout() {
 	}
 	m.viewport.Width = m.width
 	m.viewport.Height = vpHeight
+	// Re-pad transcript so content stays bottom-anchored as the
+	// viewport's effective height changes (palette opens/closes,
+	// terminal resizes).
+	m.refreshViewport()
 }
 
 // refreshPalette toggles the palette based on the current textarea
@@ -501,7 +513,27 @@ func (m *Model) renderPalette() string {
 func (m *Model) appendLine(line string) {
 	m.transcript.WriteString(line)
 	m.transcript.WriteString("\n")
-	m.viewport.SetContent(m.transcript.String())
+	m.refreshViewport()
+}
+
+// refreshViewport feeds the transcript into the viewport, padding with
+// leading blank lines when content is shorter than the viewport so the
+// content sits at the bottom (right above the palette/input) instead of
+// at the top with a sea of empty space below.
+//
+// Once content exceeds viewport height, padding becomes 0 and normal
+// scroll-from-bottom behavior takes over.
+func (m *Model) refreshViewport() {
+	content := m.transcript.String()
+	if m.viewport.Height > 0 {
+		// Count rendered lines (transcript ends with \n, so subtract 1).
+		nl := strings.Count(content, "\n")
+		if nl < m.viewport.Height {
+			pad := strings.Repeat("\n", m.viewport.Height-nl)
+			content = pad + content
+		}
+	}
+	m.viewport.SetContent(content)
 	m.viewport.GotoBottom()
 }
 
