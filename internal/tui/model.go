@@ -879,9 +879,12 @@ func (m *Model) submit(text string) tea.Cmd {
 	// so the next turn isn't surprise-bound to the same skill.
 	userInput := text
 	if m.activeSkill != "" {
+		// Be explicit about the slug format — earlier sessions saw the
+		// model emit `skillplus:<id>` (an old spec format) and the
+		// compile failed. Pass the bare slug.
 		userInput = fmt.Sprintf(
-			"Use the skillplus skill %q for this request — call compile_skill first to fetch its prompt + output schema, then proceed.\n\n%s",
-			m.activeSkill, text,
+			"Apply the skill %q to this request: first call compile_skill with skill=%q (BARE slug, no 'skillplus:' prefix) to fetch the package's prompt + output schema, then proceed.\n\n%s",
+			m.activeSkill, m.activeSkill, text,
 		)
 		m.activeSkill = ""
 	}

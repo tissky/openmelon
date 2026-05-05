@@ -321,13 +321,23 @@ func compileSkillTool(env *Env) Tool {
 	return Tool{
 		Spec: Spec{
 			Name:        "compile_skill",
-			Description: "Compile a skillplus package and return its compiled prompt + output schema. Use this when a registered skill exists for the task.",
+			Description: "Compile a skillplus package and return its compiled prompt + output schema. Pass the BARE skill slug (e.g. \"brand-logo\"), not \"skillplus:brand-logo\".",
 			Parameters: json.RawMessage(`{
 				"type": "object",
 				"properties": {
-					"skill": {"type": "string", "description": "skill spec, e.g. skillplus:food-street-realism or path:/abs/dir"},
-					"locale": {"type": "string"},
-					"model_profile": {"type": "string"},
+					"skill": {
+						"type": "string",
+						"description": "Bare skill slug (e.g. \"brand-logo\", \"food-street-realism\") OR an absolute path to a .skillplus directory. Do NOT prefix with \"skillplus:\"."
+					},
+					"locale": {
+						"type": "string",
+						"description": "Locale to compile for. Allowed: \"zh-CN\" or \"en\". Default zh-CN.",
+						"enum": ["zh-CN", "en"]
+					},
+					"model_profile": {
+						"type": "string",
+						"description": "Per-skill prompt overlay slug. Default \"gpt-image-family\"."
+					},
 					"vars": {"type": "object", "additionalProperties": {"type": "string"}}
 				},
 				"required": ["skill"]
@@ -343,14 +353,18 @@ func compileSkillTool(env *Env) Tool {
 			if err := json.Unmarshal(raw, &args); err != nil {
 				return nil, fmt.Errorf("invalid args: %w", err)
 			}
-			if args.Locale == "" {
-				args.Locale = "zh-CN"
-			}
+			// Be forgiving: strip "skillplus:" / "path:" prefixes the
+			// model might have learned from older docs. The CLI only
+			// accepts a bare slug or an absolute path.
+			args.Skill = strings.TrimPrefix(args.Skill, "skillplus:")
+			args.Skill = strings.TrimPrefix(args.Skill, "path:")
+
+			args.Locale = normalizeLocale(args.Locale)
 			if args.ModelProfile == "" {
 				args.ModelProfile = "gpt-image-family"
 			}
 			compiled, err := env.Compiler.CompileRaw(ctx, &skillplus.CompileRequest{
-				PackagePath:  args.Skill, // compiler resolves skillplus:... too
+				PackagePath:  args.Skill,
 				Target:       "openmelon",
 				ModelProfile: args.ModelProfile,
 				Locale:       args.Locale,
@@ -366,6 +380,21 @@ func compileSkillTool(env *Env) Tool {
 			return compiledMap, nil
 		},
 	}
+}
+
+// normalizeLocale maps loose locale strings the model might emit
+// ("zh", "chinese", "cn") to the canonical values skillplus accepts
+// ("zh-CN", "en"). Empty / unknown defaults to zh-CN.
+func normalizeLocale(in string) string {
+	v := strings.ToLower(strings.TrimSpace(in))
+	switch v {
+	case "", "zh", "zh-cn", "zh_cn", "chinese", "cn":
+		return "zh-CN"
+	case "en", "en-us", "english", "us":
+		return "en"
+	}
+	// Unknown — pass through, let skillplus error if it's truly invalid.
+	return in
 }
 
 func generateImageTool(env *Env) Tool {
