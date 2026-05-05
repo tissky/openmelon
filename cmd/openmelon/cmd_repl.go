@@ -95,15 +95,15 @@ func runRepl(_ []string) error {
 	// "compose env, register, assign" sequence with whatever the
 	// latest imgGen + sessionDir are.
 	//
-	// approveHolder.fn is what tools.Env.Approve indirects through. It
-	// starts nil (bash tool will return "no approval gate"), and gets
-	// filled in by tui.Run via Options.InstallApprove. Using a holder
-	// rather than baking the func into env directly means rebuilds
-	// don't lose the approval wiring.
+	// approveHolder.fn is what tools.Env.Approve indirects through.
+	// allowedBinaries is the per-session "yes-always" set; both fields
+	// survive wireSession + /model-image rebuilds because env captures
+	// the holder by pointer.
 	var sessionDir string
 	approveHolder := &struct {
-		fn func(req tools.ApprovalRequest) bool
-	}{}
+		fn               func(req tools.ApprovalRequest) tools.ApprovalDecision
+		allowedBinaries  map[string]bool
+	}{allowedBinaries: map[string]bool{}}
 	rebuildToolsEnv := func() {
 		reg := tools.NewRegistry()
 		tools.RegisterAll(reg, &tools.Env{
@@ -112,12 +112,20 @@ func runRepl(_ []string) error {
 			SessionDir: sessionDir,
 			Compiler:   &skillplus.Compiler{},
 			ImageGen:   imgGen,
-			Approve: func(req tools.ApprovalRequest) bool {
+			Approve: func(req tools.ApprovalRequest) tools.ApprovalDecision {
 				if approveHolder.fn == nil {
-					return false
+					return tools.ApprovalDecision{}
 				}
 				return approveHolder.fn(req)
 			},
+			JudgeBash: tools.JudgeBashWithLLM(rt.LLM),
+			IsBashAllowed: func(binary string) bool {
+				return approveHolder.allowedBinaries[binary]
+			},
+			AllowBash: func(binary string) {
+				approveHolder.allowedBinaries[binary] = true
+			},
+			BashMode: string(proj.Settings.EffectiveBashMode()),
 		})
 		rt.Registry = reg
 	}
@@ -214,8 +222,18 @@ func runRepl(_ []string) error {
 			ImageModel:        imageModel,
 			RebuildLLM:        rebuildLLM,
 			RebuildImageModel: rebuildImageModel,
-			InstallApprove: func(approve func(req tools.ApprovalRequest) bool) {
+			InstallApprove: func(approve func(req tools.ApprovalRequest) tools.ApprovalDecision) {
 				approveHolder.fn = approve
+			},
+			BashMode: proj.Settings.EffectiveBashMode(),
+			SaveSettings: func(s projectx.Settings) error {
+				proj.Settings = s
+				if err := projectx.Save(wd, proj); err != nil {
+					return err
+				}
+				// Rebuild tools env so the new mode takes effect this turn.
+				rebuildToolsEnv()
+				return nil
 			},
 		})
 	}

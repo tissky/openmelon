@@ -34,6 +34,7 @@ import (
 	"github.com/eight-acres-lab/openmelon/internal/projectx"
 	"github.com/eight-acres-lab/openmelon/internal/runtime"
 	"github.com/eight-acres-lab/openmelon/internal/session"
+	"github.com/eight-acres-lab/openmelon/internal/tools"
 )
 
 type runState int
@@ -47,6 +48,7 @@ const (
 	stateImageModelSelect  // /model-image — pick image model
 	stateImageModelCustom  // /model-image → "Custom..." → typing
 	stateApprovalPending   // bash tool waiting on user confirmation
+	stateSettings          // /settings — bash permission picker
 )
 
 // Model is the Bubbletea Model. Constructed by Run() and never used
@@ -114,9 +116,15 @@ type Model struct {
 	rebuildImageModel func(provider, model string) (tag string, err error)
 
 	// Active approval modal — set when an approvalRequestMsg arrives,
-	// cleared after the user answers. approvalCursor: 0=Yes, 1=No.
+	// cleared after the user answers. approvalCursor: 0=Yes,
+	// 1=Yes-always, 2=No.
 	approvalReq    *approvalRequestMsg
 	approvalCursor int
+
+	// Settings panel state.
+	settingsCursor int
+	bashMode       projectx.BashPermissionMode
+	saveSettings   func(s projectx.Settings) error
 }
 
 // slashCommand is one row in the slash palette.
@@ -131,6 +139,7 @@ var slashCommands = []slashCommand{
 	{"/help", "show this list of commands"},
 	{"/model", "switch the LLM model for this session"},
 	{"/model-image", "switch the image-generation model"},
+	{"/settings", "open the settings panel (bash permissions, etc.)"},
 	{"/clear", "forget the conversation history"},
 	{"/history", "print the message log so far"},
 	{"/save", "write the conversation to a file (jsonl)"},
@@ -157,6 +166,16 @@ type modelInit struct {
 	ImageProvider string
 	LLMModel      string
 	ImageModel    string
+
+	// BashMode is the current project setting (strict / auto /
+	// trusted), surfaced in the /settings panel.
+	BashMode projectx.BashPermissionMode
+
+	// SaveSettings persists a Settings change made via the /settings
+	// panel back to project.json AND triggers any side-effects (e.g.
+	// rebuilding the tools env so the bash mode change takes effect
+	// immediately without restart).
+	SaveSettings func(s projectx.Settings) error
 
 	// RebuildLLM is called when the user picks a new LLM model in the
 	// /model selector. It must construct a fresh llm.Client + Tool-
@@ -209,6 +228,8 @@ func newModel(init modelInit) *Model {
 		imageModel:        init.ImageModel,
 		rebuildLLM:        init.RebuildLLM,
 		rebuildImageModel: init.RebuildImageModel,
+		bashMode:          init.BashMode,
+		saveSettings:      init.SaveSettings,
 		systemPrompt: init.SystemPrompt,
 		session:      init.Session,
 		runner:       init.Runner,
@@ -248,6 +269,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Approval modal owns all input until the user answers.
 		if m.state == stateApprovalPending {
 			m.updateApproval(msg)
+			return m, tea.Batch(cmds...)
+		}
+		if m.state == stateSettings {
+			m.updateSettings(msg)
 			return m, tea.Batch(cmds...)
 		}
 		// Selector states own all key input until they exit.
@@ -475,6 +500,8 @@ func (m *Model) View() string {
 		b.WriteString("\n")
 	case stateApprovalPending:
 		b.WriteString(m.renderApproval())
+	case stateSettings:
+		b.WriteString(m.renderSettings())
 	case stateModelSelect, stateImageModelSelect:
 		b.WriteString(m.renderSelector())
 	case stateModelCustom, stateImageModelCustom:
@@ -586,9 +613,7 @@ func (m *Model) recomputeLayout() {
 	case stateRunning:
 		overlayRows = 1 // single status row
 	case stateApprovalPending:
-		// Bash command + description + 2 menu rows + a few framing
-		// lines. Estimate from the request body so a multi-line script
-		// gets enough room.
+		// Bash command + description + 3 menu rows + framing.
 		body := 1
 		if m.approvalReq != nil {
 			body = strings.Count(m.approvalReq.Command, "\n") + 1
@@ -596,7 +621,9 @@ func (m *Model) recomputeLayout() {
 				body = 12
 			}
 		}
-		overlayRows = body + 8 // header + body + desc + question + 2 rows + footer + spacing
+		overlayRows = body + 9
+	case stateSettings:
+		overlayRows = 12 // header + desc + 3 mode rows + footer + spacing
 	case stateModelSelect, stateImageModelSelect:
 		overlayRows = len(m.modelSelectorRows()) + 5 // header+desc+blank+rows+blank+footer
 	case stateModelCustom, stateImageModelCustom:
@@ -796,6 +823,9 @@ func (m *Model) handleSlash(line string) tea.Cmd {
 		return nil
 	case "/model-image":
 		m.openModelSelector(true)
+		return nil
+	case "/settings", "/config":
+		m.openSettings()
 		return nil
 	case "/clear":
 		m.history = nil
@@ -1200,48 +1230,175 @@ func (m *Model) inSelector() bool {
 // Approval modal (bash tool confirmation)
 // =====================================================================
 
+// approvalOptions are the three rows of the bash approval modal. The
+// "always" row is data-driven so renderApproval can include the
+// command's first binary in its label.
+func (m *Model) approvalOptions() []string {
+	binary := "this binary"
+	if m.approvalReq != nil && m.approvalReq.Binary != "" {
+		binary = m.approvalReq.Binary
+	}
+	return []string{
+		"Yes",
+		fmt.Sprintf("Yes, always allow `%s` this session", binary),
+		"No",
+	}
+}
+
 // updateApproval handles key input while a bash approval is pending.
-// 1 / Enter / y → approve, 2 / n / Esc → deny. Approval is sent to the
-// worker goroutine via the request's Reply channel.
+// 1 / Enter / y → approve once, 2 → approve + always for this binary,
+// 3 / n / Esc → deny. Up/Down navigates.
 func (m *Model) updateApproval(msg tea.KeyMsg) {
+	max := len(m.approvalOptions()) - 1
 	switch msg.String() {
 	case "up", "k":
 		if m.approvalCursor > 0 {
 			m.approvalCursor--
 		}
 	case "down", "j":
-		if m.approvalCursor < 1 {
+		if m.approvalCursor < max {
 			m.approvalCursor++
 		}
 	case "1", "y", "Y":
 		m.approvalCursor = 0
-		m.answerApproval(true)
-	case "2", "n", "N", "esc":
+		m.answerApproval(true, false)
+	case "2":
 		m.approvalCursor = 1
-		m.answerApproval(false)
+		m.answerApproval(true, true)
+	case "3", "n", "N", "esc":
+		m.approvalCursor = max
+		m.answerApproval(false, false)
 	case "enter":
-		m.answerApproval(m.approvalCursor == 0)
+		switch m.approvalCursor {
+		case 0:
+			m.answerApproval(true, false)
+		case 1:
+			m.answerApproval(true, true)
+		default:
+			m.answerApproval(false, false)
+		}
 	}
 }
 
 // answerApproval sends the user's choice back to the worker goroutine
 // and transitions back to stateRunning so the spinner / activity row
-// resumes (the worker will emit more events as the rest of the run
-// continues, including possibly another approval request).
-func (m *Model) answerApproval(approved bool) {
+// resumes.
+func (m *Model) answerApproval(approved, always bool) {
 	if m.approvalReq == nil {
 		return
 	}
-	// Non-blocking send: Reply has buffer=1.
-	m.approvalReq.Reply <- approved
+	m.approvalReq.Reply <- tools.ApprovalDecision{Approved: approved, Always: always}
 	m.approvalReq = nil
 	m.state = stateRunning
-	if approved {
+	switch {
+	case approved && always:
+		m.activityText = "Running bash (allowed for session)"
+	case approved:
 		m.activityText = "Running bash"
-	} else {
+	default:
 		m.activityText = "Bash denied"
 	}
 	m.recomputeLayout()
+}
+
+// =====================================================================
+// Settings panel (/settings)
+// =====================================================================
+
+// bashModeRows is the ordered list shown in /settings → Bash perms.
+var bashModeRows = []struct {
+	mode  projectx.BashPermissionMode
+	title string
+	desc  string
+}{
+	{projectx.BashModeStrict, "Strict",
+		"Every bash needs your approval. Judge LLM auto-blocks anything destructive."},
+	{projectx.BashModeAuto, "Auto-judge",
+		"Judge LLM auto-runs read-only commands; you approve writes; destructive ones blocked."},
+	{projectx.BashModeTrusted, "Trusted (DANGEROUS)",
+		"Run any bash without asking. Like Claude Code's --dangerously-skip-permissions. Use only in throwaway projects."},
+}
+
+func (m *Model) openSettings() {
+	m.state = stateSettings
+	m.settingsCursor = 0
+	for i, r := range bashModeRows {
+		if r.mode == m.bashMode {
+			m.settingsCursor = i
+			break
+		}
+	}
+	m.recomputeLayout()
+}
+
+func (m *Model) updateSettings(msg tea.KeyMsg) {
+	max := len(bashModeRows) - 1
+	switch msg.String() {
+	case "esc", "ctrl+c":
+		m.state = stateIdle
+		m.recomputeLayout()
+	case "up", "k":
+		if m.settingsCursor > 0 {
+			m.settingsCursor--
+		}
+	case "down", "j":
+		if m.settingsCursor < max {
+			m.settingsCursor++
+		}
+	case "enter":
+		picked := bashModeRows[m.settingsCursor].mode
+		if picked != m.bashMode {
+			if m.saveSettings != nil {
+				if err := m.saveSettings(projectx.Settings{BashPermissionMode: picked}); err != nil {
+					m.appendLine(styleErr.Render("settings save failed: " + err.Error()))
+				} else {
+					m.bashMode = picked
+					m.appendLine(styleHelp.Render("(bash mode: " + string(picked) + ")"))
+				}
+			}
+		}
+		m.state = stateIdle
+		m.recomputeLayout()
+	}
+	// Number-key shortcut.
+	if len(msg.String()) == 1 && msg.String()[0] >= '1' && msg.String()[0] <= '9' {
+		n := int(msg.String()[0] - '1')
+		if n <= max {
+			m.settingsCursor = n
+		}
+	}
+}
+
+func (m *Model) renderSettings() string {
+	var b strings.Builder
+	b.WriteString(headerStyle.Render("Settings"))
+	b.WriteString("\n\n")
+	b.WriteString(headerStyle.Render("Bash permissions"))
+	b.WriteString("\n")
+	b.WriteString(styleHelp.Render("How the agent's bash tool decides whether to ask you. Persists to project.json."))
+	b.WriteString("\n\n")
+	for i, r := range bashModeRows {
+		marker := "  "
+		num := fmt.Sprintf("%d.", i+1)
+		title := r.title
+		check := ""
+		if r.mode == m.bashMode {
+			check = " ✓"
+		}
+		if i == m.settingsCursor {
+			marker = stylePromptArrow.Render("› ")
+			num = stylePaletteActive.Render(num)
+			title = stylePaletteActive.Render(r.title + check)
+		} else {
+			title = r.title + check
+		}
+		fmt.Fprintf(&b, "%s%s %s\n", marker, num, title)
+		fmt.Fprintf(&b, "     %s\n", styleHelp.Render(r.desc))
+	}
+	b.WriteString("\n")
+	b.WriteString(styleHelp.Render("Enter to set · Esc to close · 1-3 shortcut"))
+	b.WriteString("\n")
+	return b.String()
 }
 
 // renderApproval draws the bash-confirmation panel.
@@ -1262,8 +1419,7 @@ func (m *Model) renderApproval() string {
 		b.WriteString("\n")
 	}
 	b.WriteString("\nDo you want to proceed?\n")
-	options := []string{"Yes", "No"}
-	for i, opt := range options {
+	for i, opt := range m.approvalOptions() {
 		marker := "  "
 		num := fmt.Sprintf("%d.", i+1)
 		title := opt
@@ -1275,7 +1431,7 @@ func (m *Model) renderApproval() string {
 		fmt.Fprintf(&b, "%s%s %s\n", marker, num, title)
 	}
 	b.WriteString("\n")
-	b.WriteString(styleHelp.Render("Enter to confirm · Esc to deny · 1/2 shortcut"))
+	b.WriteString(styleHelp.Render("Enter to confirm · Esc to deny · 1/2/3 shortcut"))
 	b.WriteString("\n")
 	return b.String()
 }

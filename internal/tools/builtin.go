@@ -50,12 +50,33 @@ type Env struct {
 	ImageGen imagegen.Generator
 
 	// Approve, when non-nil, is called by tools that need explicit
-	// user confirmation before running (notably bash). Returns true
-	// to proceed, false to abort. Synchronous — the tool blocks
-	// until the user answers via whatever UI is wired (TUI modal,
-	// stdin prompt, etc.). nil means side-effecting tools that need
-	// approval are skipped / default-denied.
-	Approve func(req ApprovalRequest) bool
+	// user confirmation before running (notably bash). Returns the
+	// user's decision. Synchronous — the tool blocks until the user
+	// answers via whatever UI is wired (TUI modal, stdin prompt).
+	// nil means tools that need approval default-deny.
+	Approve func(req ApprovalRequest) ApprovalDecision
+
+	// JudgeBash, when non-nil, is called BEFORE Approve. It classifies
+	// a command into AUTO / ASK / BLOCK; only ASK reaches the user.
+	// Typically backed by a small LLM call. nil means every command
+	// goes straight to Approve.
+	JudgeBash func(ctx context.Context, command, description string) BashJudgement
+
+	// IsBashAllowed returns true when the binary (extracted from the
+	// command's first token) is on the per-session allowlist —
+	// previous "Yes, always" decisions populate it. nil → never
+	// auto-allow.
+	IsBashAllowed func(binary string) bool
+
+	// AllowBash adds binary to the per-session allowlist. Called by
+	// the bash tool when the user picks "Yes, always" in the
+	// approval modal.
+	AllowBash func(binary string)
+
+	// BashMode is the project's effective permission mode (strict /
+	// auto / trusted). The bash tool reads this each call. Empty
+	// string defaults to strict.
+	BashMode string
 }
 
 // RegisterAll registers the full tool set into reg. Side-effecting

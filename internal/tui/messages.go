@@ -12,6 +12,7 @@ package tui
 import (
 	"github.com/eight-acres-lab/openmelon/internal/llm"
 	"github.com/eight-acres-lab/openmelon/internal/runtime"
+	"github.com/eight-acres-lab/openmelon/internal/tools"
 )
 
 // turnStartedMsg fires when the runtime begins a new model turn. The
@@ -49,11 +50,12 @@ type runDoneMsg struct {
 
 // approvalRequestMsg is what tools.Env.Approve sends when a tool
 // (currently just bash) needs the user to confirm. The TUI freezes
-// in a modal until the user picks Yes / No, then sends the boolean
-// down Reply.
+// in a modal until the user picks one of Yes / Yes-always-for-binary
+// / No, then sends the resulting ApprovalDecision down Reply.
 type approvalRequestMsg struct {
 	Tool        string
 	Command     string
 	Description string
-	Reply       chan bool
+	Binary      string
+	Reply       chan tools.ApprovalDecision
 }

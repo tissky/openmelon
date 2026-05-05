@@ -112,7 +112,29 @@ type ApprovalRequest struct {
 	Tool        string // "bash"
 	Command     string
 	Description string
+	// Binary is the first executable name parsed from Command. The
+	// approval modal uses it to label the "Yes always for <binary>"
+	// option.
+	Binary string
 }
+
+// ApprovalDecision is what the user (or auto-approval rule) returns
+// from Env.Approve. Approved=false → tool aborts; Approved=true,
+// Always=true → also add Binary to the per-session allowlist so future
+// calls with the same binary skip the modal.
+type ApprovalDecision struct {
+	Approved bool
+	Always   bool
+}
+
+// BashJudgement is the safety classifier's verdict on a bash command.
+type BashJudgement int
+
+const (
+	BashAsk   BashJudgement = iota // default; show the modal
+	BashAuto                       // safe (read-only inspection); run without asking
+	BashBlock                      // destructive / exfiltrating; refuse without asking
+)
 
 type errInf string
 

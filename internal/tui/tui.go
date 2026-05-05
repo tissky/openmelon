@@ -37,15 +37,13 @@ type Options struct {
 	ImageModel        string
 	RebuildLLM        func(model string) (string, error)
 	RebuildImageModel func(provider, model string) (string, error)
+	BashMode          projectx.BashPermissionMode
+	SaveSettings      func(s projectx.Settings) error
 
 	// InstallApprove, if non-nil, is called by tui.Run with the
 	// approval function the TUI provides. The caller installs it on
 	// tools.Env.Approve so the bash tool can ask for confirmation.
-	// Lives here as a setter (rather than the TUI receiving a
-	// blocking channel) because the tools.Env may be rebuilt after
-	// session creation — using a holder kept by the caller, the
-	// installed func survives those rebuilds.
-	InstallApprove func(approve func(req tools.ApprovalRequest) bool)
+	InstallApprove func(approve func(req tools.ApprovalRequest) tools.ApprovalDecision)
 }
 
 // Run starts the TUI. Blocks until the user exits.
@@ -83,6 +81,8 @@ func Run(_ context.Context, opts Options) error {
 		ImageModel:        opts.ImageModel,
 		RebuildLLM:        opts.RebuildLLM,
 		RebuildImageModel: opts.RebuildImageModel,
+		BashMode:          opts.BashMode,
+		SaveSettings:      opts.SaveSettings,
 	}
 	model := newModel(mInit)
 
@@ -98,15 +98,16 @@ func Run(_ context.Context, opts Options) error {
 
 	// Install the approval bridge. The bash tool calls this from the
 	// runtime worker goroutine; we send a tea.Msg into the program,
-	// the user picks Yes/No in the modal, the model writes back to
-	// Reply, and we unblock here.
+	// the user picks one of the approval options in the modal, the
+	// model writes back to Reply, and we unblock here.
 	if opts.InstallApprove != nil {
-		opts.InstallApprove(func(req tools.ApprovalRequest) bool {
-			reply := make(chan bool, 1)
+		opts.InstallApprove(func(req tools.ApprovalRequest) tools.ApprovalDecision {
+			reply := make(chan tools.ApprovalDecision, 1)
 			prog.Send(approvalRequestMsg{
 				Tool:        req.Tool,
 				Command:     req.Command,
 				Description: req.Description,
+				Binary:      req.Binary,
 				Reply:       reply,
 			})
 			return <-reply

@@ -1,28 +1,32 @@
 package tools
 
 // bash.go — the bash tool. Lets the agent run shell commands inside
-// the project workdir, with mandatory user approval before execution.
+// the project workdir, gated by a three-tier approval system:
 //
-// Why approval is mandatory:
-//   - The model is good at "let me check if this image opened
-//     correctly" type investigations, but bad at "wait, that command
-//     would also delete my downloads folder."
-//   - The whole point of having bash is interactive triage; if we
-//     run anything the model emits, we lose the human-in-the-loop
-//     property that makes bash safe.
-//   - There's no useful sandbox we can apply that's both cheap and
-//     correct. Approval is.
+//   1. Per-session allowlist  — binaries the user has explicitly
+//      "always-approved" this session (e.g. "file", "open", "identify")
+//      run without judge or modal.
+//   2. Judge LLM (optional)   — classifies into AUTO / ASK / BLOCK.
+//      Mode controls who sees the result:
+//        strict    AUTO + ASK both prompt; only BLOCK auto-refuses.
+//        auto      AUTO runs silently; ASK prompts; BLOCK refuses.
+//        trusted   everything runs (judge bypassed entirely).
+//   3. User modal             — final fallback. Three options:
+//      Yes / Yes always for <binary> / No.
 //
-// When env.Approve is nil (which happens in headless / CI / piped
-// stdin contexts where there's no UI to render the modal), bash
-// returns an error the model can read instead of running the command.
+// trusted mode is "Claude Code's --dangerously-skip-permissions": no
+// approval, model is on the honor system. The user toggles it via the
+// /settings panel; we default to strict.
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"strings"
 	"time"
+
+	"github.com/eight-acres-lab/openmelon/internal/projectx"
 )
 
 func bashTool(env *Env) Tool {
@@ -31,22 +35,13 @@ func bashTool(env *Env) Tool {
 			Name: "bash",
 			Description: "Run a shell command inside the project workdir and return its combined stdout/stderr. " +
 				"Use sparingly — for inspecting files (file, ls, du), checking output (open, identify), " +
-				"or quick text edits the user expects. Each call requires explicit user confirmation.",
+				"or quick text edits. Each call is gated by the project's bash permission policy.",
 			Parameters: json.RawMessage(`{
 				"type": "object",
 				"properties": {
-					"command": {
-						"type": "string",
-						"description": "The shell command to run. Will be passed to /bin/sh -c."
-					},
-					"description": {
-						"type": "string",
-						"description": "One-line plain-English explanation of why you're running this. Shown to the user in the approval prompt."
-					},
-					"timeout_seconds": {
-						"type": "number",
-						"description": "Kill the command after this many seconds. Default 30, max 300."
-					}
+					"command": {"type": "string", "description": "The shell command to run. Will be passed to /bin/sh -c."},
+					"description": {"type": "string", "description": "One-line plain-English explanation of why you're running this. Shown to the user in the approval modal."},
+					"timeout_seconds": {"type": "number", "description": "Kill the command after this many seconds. Default 30, max 300."}
 				},
 				"required": ["command", "description"]
 			}`),
@@ -63,49 +58,124 @@ func bashTool(env *Env) Tool {
 			if args.Command == "" {
 				return map[string]any{"error": "command is required"}, nil
 			}
-			timeout := time.Duration(args.TimeoutSeconds) * time.Second
-			if timeout <= 0 {
-				timeout = 30 * time.Second
-			}
-			if timeout > 5*time.Minute {
-				timeout = 5 * time.Minute
+			binary := firstBinary(args.Command)
+			mode := projectx.BashPermissionMode(env.BashMode)
+			if mode == "" {
+				mode = projectx.BashModeStrict
 			}
 
+			// Tier 1: trusted mode bypasses everything.
+			if mode == projectx.BashModeTrusted {
+				return runBash(ctx, env.Workdir, args.Command, args.TimeoutSeconds, "trusted")
+			}
+
+			// Tier 2: per-session allowlist. Binaries the user has
+			// already approved with "always" in this session run
+			// without further checks.
+			if env.IsBashAllowed != nil && env.IsBashAllowed(binary) {
+				return runBash(ctx, env.Workdir, args.Command, args.TimeoutSeconds, "allowlisted")
+			}
+
+			// Tier 3: judge LLM (optional, fast model). In strict mode
+			// we only honor BLOCK from the judge — AUTO still asks
+			// the user. In auto mode we honor all three verdicts.
+			verdict := BashAsk
+			if env.JudgeBash != nil {
+				verdict = env.JudgeBash(ctx, args.Command, args.Description)
+			}
+			if verdict == BashBlock {
+				return map[string]any{
+					"error": "blocked by safety judge — the command pattern looks destructive or capable of exfiltration. If you really need this, ask the user to run it manually or switch /settings to trusted mode.",
+				}, nil
+			}
+			if mode == projectx.BashModeAuto && verdict == BashAuto {
+				return runBash(ctx, env.Workdir, args.Command, args.TimeoutSeconds, "judge:auto")
+			}
+
+			// Tier 4: ask the user.
 			if env.Approve == nil {
 				return map[string]any{
 					"error": "bash is unavailable: no approval gate is wired (running headless?)",
 				}, nil
 			}
-			ok := env.Approve(ApprovalRequest{
+			decision := env.Approve(ApprovalRequest{
 				Tool:        "bash",
 				Command:     args.Command,
 				Description: args.Description,
+				Binary:      binary,
 			})
-			if !ok {
+			if !decision.Approved {
 				return map[string]any{"error": "user denied execution"}, nil
 			}
-
-			execCtx, cancel := context.WithTimeout(ctx, timeout)
-			defer cancel()
-			cmd := exec.CommandContext(execCtx, "/bin/sh", "-c", args.Command)
-			cmd.Dir = env.Workdir
-			out, err := cmd.CombinedOutput()
-			res := map[string]any{
-				"stdout":    string(out),
-				"exit_code": cmd.ProcessState.ExitCode(),
+			if decision.Always && env.AllowBash != nil {
+				env.AllowBash(binary)
 			}
-			if err != nil {
-				if execCtx.Err() == context.DeadlineExceeded {
-					res["error"] = fmt.Sprintf("timed out after %s", timeout)
-				} else {
-					// exec.ExitError is normal — the model wants the
-					// exit code + output regardless.
-					if _, isExit := err.(*exec.ExitError); !isExit {
-						res["error"] = err.Error()
-					}
-				}
-			}
-			return res, nil
+			return runBash(ctx, env.Workdir, args.Command, args.TimeoutSeconds, "user-approved")
 		},
 	}
+}
+
+// runBash executes the command and returns the structured result the
+// model sees as the tool message. via labels how the call was approved
+// for provenance ("user-approved", "allowlisted", "judge:auto", "trusted").
+func runBash(ctx context.Context, workdir, command string, timeoutSec float64, via string) (any, error) {
+	timeout := time.Duration(timeoutSec) * time.Second
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	if timeout > 5*time.Minute {
+		timeout = 5 * time.Minute
+	}
+	execCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	cmd := exec.CommandContext(execCtx, "/bin/sh", "-c", command)
+	cmd.Dir = workdir
+	out, err := cmd.CombinedOutput()
+	res := map[string]any{
+		"stdout":     string(out),
+		"exit_code":  cmd.ProcessState.ExitCode(),
+		"approved_via": via,
+	}
+	if err != nil {
+		if execCtx.Err() == context.DeadlineExceeded {
+			res["error"] = fmt.Sprintf("timed out after %s", timeout)
+		} else if _, isExit := err.(*exec.ExitError); !isExit {
+			// exec.ExitError is normal — the model wants exit code
+			// + output regardless. Other errors are real failures.
+			res["error"] = err.Error()
+		}
+	}
+	return res, nil
+}
+
+// firstBinary extracts the first executable name from a shell command.
+// Strips leading env assignments, sudo, time, etc., and basenames the
+// path so "/usr/bin/file" → "file".
+//
+// Best-effort: doesn't fully tokenize shell. Used purely for the
+// allowlist key + the modal label, so a wrong answer just means the
+// user might have to approve a similar command again — never a
+// security violation.
+func firstBinary(command string) string {
+	tokens := strings.Fields(command)
+	for _, t := range tokens {
+		if t == "" {
+			continue
+		}
+		// Skip env-var assignments like FOO=bar.
+		if strings.Contains(t, "=") && !strings.ContainsAny(t, "/\\") {
+			continue
+		}
+		// Skip common wrapper prefixes.
+		switch t {
+		case "sudo", "time", "exec", "nohup", "env":
+			continue
+		}
+		// Strip path.
+		if idx := strings.LastIndexAny(t, "/\\"); idx >= 0 {
+			t = t[idx+1:]
+		}
+		return t
+	}
+	return ""
 }

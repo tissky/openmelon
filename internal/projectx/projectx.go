@@ -72,8 +72,54 @@ type Project struct {
 	// Empty strings fall back to user defaults.
 	Defaults Defaults `json:"defaults,omitempty"`
 
+	// Settings collects per-project agent behavior toggles. Edited via
+	// the /settings TUI panel; surfaced in `openmelon project show`.
+	Settings Settings `json:"settings,omitempty"`
+
 	// CreatedAt is set by Init at first write and never changed.
 	CreatedAt time.Time `json:"created_at"`
+}
+
+// BashPermissionMode controls how the bash tool decides whether to
+// run a given command.
+type BashPermissionMode string
+
+const (
+	// BashModeStrict (default): every bash command needs explicit
+	// user approval. The judge LLM only flags BLOCK to refuse
+	// destructive commands; everything else asks the user.
+	BashModeStrict BashPermissionMode = "strict"
+
+	// BashModeAuto: judge LLM classifies into AUTO / ASK / BLOCK.
+	// Read-only inspection commands run without asking; ambiguous
+	// commands prompt; dangerous ones are refused.
+	BashModeAuto BashPermissionMode = "auto"
+
+	// BashModeTrusted: every bash runs without asking. Equivalent to
+	// Claude Code's --dangerously-skip-permissions; only enable when
+	// you trust the model's judgment for the project at hand
+	// (e.g. throwaway scratchpad, no secrets).
+	BashModeTrusted BashPermissionMode = "trusted"
+)
+
+// Settings collects per-project agent behavior toggles.
+//
+// Empty values mean "use the global default in userconfig.Config" or
+// the hard-coded fall-back if no global is set.
+type Settings struct {
+	// BashPermissionMode selects the approval gate for the bash tool.
+	// Empty defaults to BashModeStrict.
+	BashPermissionMode BashPermissionMode `json:"bash_permission_mode,omitempty"`
+}
+
+// EffectiveBashMode returns the mode the runtime should use, applying
+// the strict default when no value is configured.
+func (s Settings) EffectiveBashMode() BashPermissionMode {
+	switch s.BashPermissionMode {
+	case BashModeAuto, BashModeTrusted:
+		return s.BashPermissionMode
+	}
+	return BashModeStrict
 }
 
 // Defaults are per-project overrides for the model + locale knobs.
