@@ -18,6 +18,7 @@ import (
 	"github.com/eight-acres-lab/openmelon/internal/projectx"
 	"github.com/eight-acres-lab/openmelon/internal/repl"
 	"github.com/eight-acres-lab/openmelon/internal/runtime"
+	"github.com/eight-acres-lab/openmelon/internal/session"
 	"github.com/eight-acres-lab/openmelon/internal/skillplus"
 	"github.com/eight-acres-lab/openmelon/internal/tools"
 	"github.com/eight-acres-lab/openmelon/internal/tui"
@@ -146,10 +147,24 @@ func runRepl(_ []string) error {
 	})
 	systemPrompt := buildProjectSystemPrompt(proj, probe.Names())
 
+	// Resume support: if `openmelon resume <id>` set resumeID, load
+	// that session's transcript so the new TUI starts pre-populated.
+	var resumedHistory []llm.Message
+	if resumeID != "" {
+		h, err := session.LoadHistory(wd, resumeID)
+		if err != nil {
+			return fmt.Errorf("resume: %w", err)
+		}
+		resumedHistory = h
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	intent := fmt.Sprintf("interactive REPL %s", time.Now().UTC().Format("2006-01-02 15:04"))
+	if resumeID != "" {
+		intent = fmt.Sprintf("resumed from %s · %s", resumeID, intent)
+	}
 
 	// Use the full TUI when stdin AND stdout are both real terminals.
 	// Pipes / CI / scripted runs fall back to the bufio REPL — bubbletea
@@ -214,6 +229,8 @@ func runRepl(_ []string) error {
 			WireSession:       wireSession,
 			SystemPrompt:      systemPrompt,
 			SessionIntent:     intent,
+			ResumedFrom:       resumeID,
+			InitialHistory:    resumedHistory,
 			LLMTag:            llmTag,
 			ImageTag:          imageTag,
 			Provider:          llmProvider,

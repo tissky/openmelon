@@ -46,6 +46,7 @@ var subcommands = map[string]func(args []string) error{
 	"search":    runSearch,
 	"repl":      runRepl,
 	"setup":     runSetup,
+	"resume":    runResume,
 }
 
 func main() {

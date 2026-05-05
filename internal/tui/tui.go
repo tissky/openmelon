@@ -8,8 +8,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/eight-acres-lab/openmelon/internal/llm"
 	"github.com/eight-acres-lab/openmelon/internal/projectx"
 	"github.com/eight-acres-lab/openmelon/internal/runtime"
 	"github.com/eight-acres-lab/openmelon/internal/session"
@@ -40,6 +42,17 @@ type Options struct {
 	BashMode          projectx.BashPermissionMode
 	SaveSettings      func(s projectx.Settings) error
 
+	// ResumedFrom, when non-empty, is the session id this TUI is
+	// continuing. Recorded in the new session's meta.json so the
+	// chain of resumes is traceable.
+	ResumedFrom string
+
+	// InitialHistory, if non-empty, pre-populates the conversation.
+	// First message is treated as the system prompt; everything else
+	// renders into the transcript and seeds m.history so the next
+	// user turn includes the prior context.
+	InitialHistory []llm.Message
+
 	// InstallApprove, if non-nil, is called by tui.Run with the
 	// approval function the TUI provides. The caller installs it on
 	// tools.Env.Approve so the bash tool can ask for confirmation.
@@ -55,7 +68,7 @@ func Run(_ context.Context, opts Options) error {
 		return errors.New("tui: Project is required")
 	}
 
-	sess, err := session.New(opts.Workdir, opts.Project.ID, opts.SessionIntent)
+	sess, err := session.NewResume(opts.Workdir, opts.Project.ID, opts.SessionIntent, opts.ResumedFrom)
 	if err != nil {
 		return fmt.Errorf("tui: session: %w", err)
 	}
@@ -83,6 +96,8 @@ func Run(_ context.Context, opts Options) error {
 		RebuildImageModel: opts.RebuildImageModel,
 		BashMode:          opts.BashMode,
 		SaveSettings:      opts.SaveSettings,
+		InitialHistory:    opts.InitialHistory,
+		ResumedFrom:       opts.ResumedFrom,
 	}
 	model := newModel(mInit)
 
@@ -123,5 +138,10 @@ func Run(_ context.Context, opts Options) error {
 	if _, err := prog.Run(); err != nil {
 		return fmt.Errorf("tui: %w", err)
 	}
+	// Resume hint — printed AFTER alt-screen restores so the user
+	// sees it in their normal shell scrollback.
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "session saved at "+sess.Dir)
+	fmt.Fprintln(os.Stderr, "to resume:    openmelon resume "+sess.ID)
 	return nil
 }

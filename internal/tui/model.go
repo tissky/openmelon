@@ -125,6 +125,11 @@ type Model struct {
 	settingsCursor int
 	bashMode       projectx.BashPermissionMode
 	saveSettings   func(s projectx.Settings) error
+
+	// resumedFrom is the prior session id when this run was started
+	// via `openmelon resume`. Shown in the banner; used in the exit
+	// hint footer.
+	resumedFrom string
 }
 
 // slashCommand is one row in the slash palette.
@@ -176,6 +181,12 @@ type modelInit struct {
 	// rebuilding the tools env so the bash mode change takes effect
 	// immediately without restart).
 	SaveSettings func(s projectx.Settings) error
+
+	// InitialHistory pre-populates the conversation when resuming.
+	InitialHistory []llm.Message
+
+	// ResumedFrom is the prior session id (used for the banner).
+	ResumedFrom string
 
 	// RebuildLLM is called when the user picks a new LLM model in the
 	// /model selector. It must construct a fresh llm.Client + Tool-
@@ -230,6 +241,8 @@ func newModel(init modelInit) *Model {
 		rebuildImageModel: init.RebuildImageModel,
 		bashMode:          init.BashMode,
 		saveSettings:      init.SaveSettings,
+		history:           append([]llm.Message(nil), init.InitialHistory...),
+		resumedFrom:       init.ResumedFrom,
 		systemPrompt: init.SystemPrompt,
 		session:      init.Session,
 		runner:       init.Runner,
@@ -249,11 +262,51 @@ func (m *Model) Init() tea.Cmd {
 		"openmelon · project %s · session %s",
 		m.project.ID, shortSession(m.session.Dir),
 	)))
+	if m.resumedFrom != "" {
+		m.appendLine(styleHelp.Render("resumed from " + m.resumedFrom))
+	}
 	m.appendLine(styleHelp.Render(
 		"Type a request and press ↵. /help for commands. Esc cancels a turn; Ctrl+C twice to quit.",
 	))
 	m.appendLine("")
+	// Render any resumed history into the transcript.
+	if len(m.history) > 0 {
+		m.appendLine(styleHelp.Render(fmt.Sprintf("─── prior conversation (%d messages) ───", len(m.history))))
+		m.appendLine("")
+		for _, msg := range m.history {
+			m.renderHistoricMessage(msg)
+		}
+		m.appendLine(styleHelp.Render("─── continue below ───"))
+		m.appendLine("")
+		// History is on disk via a different session — we don't
+		// re-persist it. persistedUpTo starts at len(history) so the
+		// new session only writes truly-new messages.
+		m.persistedUpTo = len(m.history)
+	}
 	return tea.Batch(textarea.Blink, m.spinner.Tick)
+}
+
+// renderHistoricMessage prints one prior message into the transcript
+// in the same format the live session uses, so a resumed conversation
+// reads continuously.
+func (m *Model) renderHistoricMessage(msg llm.Message) {
+	switch msg.Role {
+	case llm.RoleSystem:
+		// Skip — system prompt is internal noise for the user.
+	case llm.RoleUser:
+		m.appendLine(styleUserPrompt.Render("> ") + msg.Content)
+		m.appendLine("")
+	case llm.RoleAssistant:
+		if strings.TrimSpace(msg.Content) != "" {
+			m.appendLine(msg.Content)
+		}
+		for _, tc := range msg.ToolCalls {
+			m.appendLine(renderToolCall(tc))
+		}
+	case llm.RoleTool:
+		// We don't have the original ToolCall here, just the content.
+		m.appendLine(renderToolResult(llm.ToolCall{}, msg.Content, nil))
+	}
 }
 
 // Update is the bubbletea event reducer.
@@ -264,6 +317,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.resize(msg.Width, msg.Height)
 		return m, nil
+
+	case tea.MouseMsg:
+		// bubbles/viewport handles wheel events natively; we just need
+		// to forward the message. tea.WithMouseCellMotion in tui.Run
+		// is what enables MouseMsg delivery in the first place.
+		var cmd tea.Cmd
+		m.viewport, cmd = m.viewport.Update(msg)
+		return m, cmd
 
 	case tea.KeyMsg:
 		// Approval modal owns all input until the user answers.

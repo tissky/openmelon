@@ -21,9 +21,13 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/eight-acres-lab/openmelon/internal/llm"
@@ -45,8 +49,16 @@ type Session struct {
 //
 // The id is "<UTC timestamp>-<8 hex chars>" so directory listings sort
 // chronologically and collisions across parallel runs are vanishingly
-// unlikely.
+// unlikely. resumedFrom, if non-empty, is recorded in meta.json so the
+// new session keeps a breadcrumb back to the conversation it
+// continues.
 func New(workdir, projectID, intent string) (*Session, error) {
+	return NewResume(workdir, projectID, intent, "")
+}
+
+// NewResume is like New but tags the session as a continuation of
+// resumedFrom in meta.json.
+func NewResume(workdir, projectID, intent, resumedFrom string) (*Session, error) {
 	now := time.Now().UTC()
 	id := now.Format("20060102-150405") + "-" + randHex(4)
 	dir := filepath.Join(projectx.StateDir(workdir), "sessions", id)
@@ -61,13 +73,17 @@ func New(workdir, projectID, intent string) (*Session, error) {
 		ProjectID: projectID,
 		Intent:    intent,
 	}
-	meta, _ := json.MarshalIndent(map[string]any{
+	meta := map[string]any{
 		"id":         id,
 		"project_id": projectID,
 		"intent":     intent,
 		"started_at": now.Format(time.RFC3339),
-	}, "", "  ")
-	if err := os.WriteFile(filepath.Join(dir, "meta.json"), append(meta, '\n'), 0o644); err != nil {
+	}
+	if resumedFrom != "" {
+		meta["resumed_from"] = resumedFrom
+	}
+	body, _ := json.MarshalIndent(meta, "", "  ")
+	if err := os.WriteFile(filepath.Join(dir, "meta.json"), append(body, '\n'), 0o644); err != nil {
 		return nil, err
 	}
 	f, err := os.OpenFile(filepath.Join(dir, "messages.jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
@@ -115,6 +131,108 @@ func (s *Session) Close() error {
 	err := s.msgFile.Close()
 	s.msgFile = nil
 	return err
+}
+
+// LoadHistory reads messages.jsonl from the named session and returns
+// the parsed message list. Used by `openmelon resume` to seed a new
+// TUI with the prior conversation.
+func LoadHistory(workdir, sessionID string) ([]llm.Message, error) {
+	path := filepath.Join(projectx.StateDir(workdir), "sessions", sessionID, "messages.jsonl")
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("session: open %s: %w", path, err)
+	}
+	defer f.Close()
+	var out []llm.Message
+	dec := json.NewDecoder(f)
+	for {
+		var m llm.Message
+		if err := dec.Decode(&m); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return nil, fmt.Errorf("session: parse %s: %w", path, err)
+		}
+		out = append(out, m)
+	}
+	return out, nil
+}
+
+// Summary is the lightweight metadata record used by Recent. The
+// FirstUserMessage field is populated from messages.jsonl when
+// present so the picker can show a preview alongside the id.
+type Summary struct {
+	ID               string
+	StartedAt        time.Time
+	Intent           string
+	ResumedFrom      string
+	FirstUserMessage string
+	TurnCount        int
+}
+
+// Recent returns the most recent N sessions for the project at workdir,
+// sorted newest-first. Sessions whose meta.json is unreadable are
+// skipped silently.
+func Recent(workdir string, limit int) ([]Summary, error) {
+	root := filepath.Join(projectx.StateDir(workdir), "sessions")
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var out []Summary
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		s, ok := loadSummary(workdir, e.Name())
+		if !ok {
+			continue
+		}
+		out = append(out, s)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt.After(out[j].StartedAt) })
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func loadSummary(workdir, id string) (Summary, bool) {
+	dir := filepath.Join(projectx.StateDir(workdir), "sessions", id)
+	body, err := os.ReadFile(filepath.Join(dir, "meta.json"))
+	if err != nil {
+		return Summary{}, false
+	}
+	var meta struct {
+		ID          string `json:"id"`
+		Intent      string `json:"intent"`
+		StartedAt   string `json:"started_at"`
+		ResumedFrom string `json:"resumed_from"`
+	}
+	if err := json.Unmarshal(body, &meta); err != nil {
+		return Summary{}, false
+	}
+	startedAt, _ := time.Parse(time.RFC3339, meta.StartedAt)
+	s := Summary{
+		ID:          meta.ID,
+		Intent:      meta.Intent,
+		StartedAt:   startedAt,
+		ResumedFrom: meta.ResumedFrom,
+	}
+	// Pull the first user message + turn count for the picker.
+	if msgs, err := LoadHistory(workdir, id); err == nil {
+		s.TurnCount = len(msgs)
+		for _, m := range msgs {
+			if m.Role == llm.RoleUser && strings.TrimSpace(m.Content) != "" {
+				s.FirstUserMessage = m.Content
+				break
+			}
+		}
+	}
+	return s, true
 }
 
 func randHex(n int) string {
