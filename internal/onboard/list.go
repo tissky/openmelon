@@ -59,7 +59,7 @@ func (m *listModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(k, key.NewBinding(key.WithKeys("ctrl+c", "esc", "q"))):
 			m.cancel = true
 			m.finished = true
-			return m, tea.Quit
+			return m, finishCancelled()
 		case key.Matches(k, key.NewBinding(key.WithKeys("up", "k"))):
 			if m.cursor > 0 {
 				m.cursor--
@@ -71,7 +71,7 @@ func (m *listModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(k, key.NewBinding(key.WithKeys("enter"))):
 			m.chosen = m.cursor
 			m.finished = true
-			return m, tea.Quit
+			return m, finishWith(m.cursor)
 		}
 		// Number-key shortcut: 1..9 picks that item.
 		if len(k.String()) == 1 && k.String()[0] >= '1' && k.String()[0] <= '9' {
@@ -80,7 +80,7 @@ func (m *listModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cursor = n
 				m.chosen = n
 				m.finished = true
-				return m, tea.Quit
+				return m, finishWith(n)
 			}
 		}
 	}
@@ -124,16 +124,25 @@ func (m *listModel) View() string {
 }
 
 // RunList runs a list selector until the user picks or cancels.
+//
+// Standalone use: wraps the model in singleShotRunner so wizardDoneMsg
+// → tea.Quit. Used by `openmelon project set-key`'s provider picker.
+// The orchestrator (Run) does NOT use this — it hosts listModel
+// directly so it can transition to the next state instead of quitting.
 func RunList(opts listOpts) (ListResult, error) {
 	if opts.Initial < 0 || opts.Initial >= len(opts.Items) {
 		opts.Initial = 0
 	}
 	m := &listModel{opts: opts, cursor: opts.Initial, chosen: -1}
-	if _, err := tea.NewProgram(m).Run(); err != nil {
+	runner := &singleShotRunner{inner: m}
+	if _, err := tea.NewProgram(runner, tea.WithAltScreen()).Run(); err != nil {
 		return ListResult{}, err
 	}
-	if m.cancel {
+	if runner.cancelled {
 		return ListResult{Index: -1, Cancelled: true}, nil
+	}
+	if idx, ok := runner.payload.(int); ok {
+		return ListResult{Index: idx}, nil
 	}
 	return ListResult{Index: m.chosen}, nil
 }

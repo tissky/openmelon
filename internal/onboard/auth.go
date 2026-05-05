@@ -187,11 +187,12 @@ func (m *keyInputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case key.Matches(k, key.NewBinding(key.WithKeys("ctrl+c", "esc"))):
 			m.cancel = true
-			return m, tea.Quit
+			return m, finishCancelled()
 		case key.Matches(k, key.NewBinding(key.WithKeys("enter"))):
-			if strings.TrimSpace(m.input.Value()) != "" {
+			val := strings.TrimSpace(m.input.Value())
+			if val != "" {
 				m.done = true
-				return m, tea.Quit
+				return m, finishWith(val)
 			}
 		}
 	}
@@ -215,11 +216,15 @@ func (m *keyInputModel) View() string {
 
 func runKeyInput(p providerOption) (string, error) {
 	m := newKeyInputModel(p)
-	if _, err := tea.NewProgram(m).Run(); err != nil {
+	runner := &singleShotRunner{inner: m}
+	if _, err := tea.NewProgram(runner, tea.WithAltScreen()).Run(); err != nil {
 		return "", err
 	}
-	if m.cancel {
+	if runner.cancelled {
 		return "", nil
+	}
+	if s, ok := runner.payload.(string); ok {
+		return s, nil
 	}
 	return strings.TrimSpace(m.input.Value()), nil
 }
@@ -277,10 +282,10 @@ func (m *modelInputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case key.Matches(k, key.NewBinding(key.WithKeys("ctrl+c", "esc"))):
 			m.cancel = true
-			return m, tea.Quit
+			return m, finishCancelled()
 		case key.Matches(k, key.NewBinding(key.WithKeys("enter"))):
 			m.done = true
-			return m, tea.Quit
+			return m, finishWith(strings.TrimSpace(m.input.Value()))
 		}
 	}
 	var cmd tea.Cmd
@@ -303,11 +308,15 @@ func (m *modelInputModel) View() string {
 
 func runModelInput(prompt, def string) (string, error) {
 	m := newModelInputModel(prompt, def)
-	if _, err := tea.NewProgram(m).Run(); err != nil {
+	runner := &singleShotRunner{inner: m}
+	if _, err := tea.NewProgram(runner, tea.WithAltScreen()).Run(); err != nil {
 		return "", err
 	}
-	if m.cancel {
+	if runner.cancelled {
 		return "", nil
+	}
+	if s, ok := runner.payload.(string); ok {
+		return s, nil
 	}
 	return strings.TrimSpace(m.input.Value()), nil
 }

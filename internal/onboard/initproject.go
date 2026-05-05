@@ -107,10 +107,10 @@ func (m *projectFieldModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case key.Matches(k, key.NewBinding(key.WithKeys("ctrl+c", "esc"))):
 			m.cancel = true
-			return m, tea.Quit
+			return m, finishCancelled()
 		case key.Matches(k, key.NewBinding(key.WithKeys("enter"))):
 			m.done = true
-			return m, tea.Quit
+			return m, finishWith(strings.TrimSpace(m.input.Value()))
 		}
 	}
 	var cmd tea.Cmd
@@ -139,11 +139,15 @@ func runProjectField(prompt, def string) (string, error) {
 	ti.Width = 60
 	ti.Focus()
 	m := &projectFieldModel{prompt: prompt, input: ti}
-	if _, err := tea.NewProgram(m).Run(); err != nil {
+	runner := &singleShotRunner{inner: m}
+	if _, err := tea.NewProgram(runner, tea.WithAltScreen()).Run(); err != nil {
 		return "", err
 	}
-	if m.cancel {
+	if runner.cancelled {
 		return "", fmt.Errorf("cancelled")
+	}
+	if s, ok := runner.payload.(string); ok {
+		return s, nil
 	}
 	return strings.TrimSpace(m.input.Value()), nil
 }
