@@ -243,6 +243,8 @@ func runAgent(ctx context.Context, opts agentOpts) error {
 	}
 	if res.ImagePath != "" {
 		fmt.Fprintf(os.Stderr, "[openmelon] image: %s (sha256=%s)\n", res.ImagePath, res.ImageSHA256[:12])
+	} else if res.ArtifactPath != "" {
+		fmt.Fprintf(os.Stderr, "[openmelon] artifact: %s\n", res.ArtifactPath)
 	}
 	fmt.Fprintf(os.Stderr, "[openmelon] provenance: %s\n", res.ProvenancePath)
 	fmt.Fprintf(os.Stderr, "[openmelon] duration: %v\n", res.FinishedAt.Sub(res.StartedAt))

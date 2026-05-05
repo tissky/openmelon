@@ -16,6 +16,7 @@
           "stage": "copywriting",
           "skillplus_package": "../../../skillplus/skills/post-caption-xiaohongshu.skillplus",
           "compile_target": "openmelon",
+          "model_profile": "generic-text-model",
           "artifact_type": "copy_draft",
           "locale": "zh-CN",
           "vars": {
