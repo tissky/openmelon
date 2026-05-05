@@ -19,14 +19,16 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 )
 
 // Config is the on-disk shape of ~/.openmelon/config.json.
 //
 // All fields are optional. Empty values mean "fall back to env / vendor
-// default". The CLI never writes API keys here — keys live in the user's
-// shell env. We persist only model + provider preferences.
+// default". The CLI never writes API keys here — keys live in
+// credentials.json (0600) instead. We persist only model + provider
+// preferences and the trusted-directories list.
 type Config struct {
 	// CurrentProject is the project ID used when no -C / cwd-discovered
 	// project applies. Empty means "no global default".
@@ -35,6 +37,52 @@ type Config struct {
 	// Defaults are the agent defaults applied when no per-project or
 	// per-invocation override is given.
 	Defaults Defaults `json:"defaults,omitempty"`
+
+	// TrustedDirs are absolute paths the user has explicitly trusted.
+	// A directory is "trusted" if it exactly matches an entry, or if
+	// it's a subdirectory of one. The TUI prompts on every launch
+	// when cwd is not trusted.
+	TrustedDirs []string `json:"trusted_dirs,omitempty"`
+}
+
+// IsTrusted returns true when path equals or is a subdirectory of any
+// entry in TrustedDirs. Both sides are absolute-pathed first.
+func (c *Config) IsTrusted(path string) bool {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	for _, t := range c.TrustedDirs {
+		tAbs, err := filepath.Abs(t)
+		if err != nil {
+			continue
+		}
+		if abs == tAbs {
+			return true
+		}
+		// Subdir check — make sure we're not just matching a prefix
+		// (e.g. /work matching /workshop).
+		if rel, err := filepath.Rel(tAbs, abs); err == nil && rel != ".." && !strings.HasPrefix(rel, "../") && rel != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// AddTrusted adds path (absolute-d) to TrustedDirs if not already
+// present. Returns true if a new entry was added.
+func (c *Config) AddTrusted(path string) bool {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	for _, t := range c.TrustedDirs {
+		if t == abs {
+			return false
+		}
+	}
+	c.TrustedDirs = append(c.TrustedDirs, abs)
+	return true
 }
 
 // Defaults are the agent defaults used in the absence of any override.

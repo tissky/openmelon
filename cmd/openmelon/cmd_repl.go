@@ -14,6 +14,7 @@ import (
 
 	"github.com/eight-acres-lab/openmelon/internal/imagegen"
 	"github.com/eight-acres-lab/openmelon/internal/llm"
+	"github.com/eight-acres-lab/openmelon/internal/onboard"
 	"github.com/eight-acres-lab/openmelon/internal/projectx"
 	"github.com/eight-acres-lab/openmelon/internal/repl"
 	"github.com/eight-acres-lab/openmelon/internal/runtime"
@@ -24,17 +25,16 @@ import (
 )
 
 func runRepl(_ []string) error {
-	cwd, err := os.Getwd()
+	// Onboarding: trust → auth → project init. Each step is a no-op
+	// when its precondition is already met.
+	res, err := onboard.Ensure()
 	if err != nil {
 		return err
 	}
-	wd, err := projectx.Discover(cwd)
-	if err != nil {
-		return err
+	if res.Quit {
+		return nil
 	}
-	if wd == "" {
-		return errors.New("repl: no openmelon project here. Run `openmelon init` first")
-	}
+	wd := res.Workdir
 	proj, err := projectx.Load(wd)
 	if err != nil {
 		return err
@@ -47,14 +47,19 @@ func runRepl(_ []string) error {
 	if imageProvider == "" {
 		imageProvider = "openrouter"
 	}
+	// Pull the API key out of credentials.json if we have one stored.
+	apiKey := ""
+	if llmProvider != "auto" {
+		apiKey = userconfig.GetAPIKey(llmProvider)
+	}
 
-	llmClient, err := llm.New(llmProvider, "", "", llmModel)
+	llmClient, err := llm.New(llmProvider, apiKey, "", llmModel)
 	if err != nil {
 		switch {
 		case errors.Is(err, llm.ErrNoAPIKey):
-			return fmt.Errorf("no API key for %s — set %s in your environment", llmProvider, envVarFor(llmProvider))
+			return fmt.Errorf("no API key for %s — run `openmelon setup` to configure", llmProvider)
 		case errors.Is(err, llm.ErrModelRequired):
-			return fmt.Errorf("--llm-model is required (or set defaults.llm_model in project.json)")
+			return fmt.Errorf("no LLM model — run `openmelon setup` to configure")
 		}
 		return fmt.Errorf("init LLM: %w", err)
 	}
@@ -65,7 +70,8 @@ func runRepl(_ []string) error {
 
 	var imgGen imagegen.Generator
 	if imageModel != "" {
-		imgGen, err = imagegen.New(imageProvider, "", "", imageModel)
+		imgKey := userconfig.GetAPIKey(imageProvider)
+		imgGen, err = imagegen.New(imageProvider, imgKey, "", imageModel)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "openmelon: image generation disabled (%v)\n", err)
 		}

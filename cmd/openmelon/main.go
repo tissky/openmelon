@@ -45,6 +45,7 @@ var subcommands = map[string]func(args []string) error{
 	"material":  runMaterial,
 	"search":    runSearch,
 	"repl":      runRepl,
+	"setup":     runSetup,
 }
 
 func main() {
@@ -62,17 +63,15 @@ func main() {
 		}
 	}
 
-	// No args inside a project → enter the REPL. Outside a project,
-	// fall through to the help banner so users see how to set up.
+	// No args → enter the REPL. The REPL's own onboarding handles
+	// trust + auth + project init when those aren't set up yet, so
+	// even fresh users with no project go through a guided flow.
 	if len(os.Args) == 1 {
-		cwd, _ := os.Getwd()
-		if wd, err := projectx.Discover(cwd); err == nil && wd != "" {
-			if err := runRepl(nil); err != nil {
-				fmt.Fprintf(os.Stderr, "openmelon: %v\n", err)
-				os.Exit(1)
-			}
-			return
+		if err := runRepl(nil); err != nil {
+			fmt.Fprintf(os.Stderr, "openmelon: %v\n", err)
+			os.Exit(1)
 		}
+		return
 	}
 
 	fs := flag.NewFlagSet("openmelon", flag.ExitOnError)
