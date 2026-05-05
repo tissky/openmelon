@@ -105,6 +105,15 @@ func (r *Registry) Dispatch(ctx context.Context, name string, args json.RawMessa
 // is not in the registry.
 var ErrUnknownTool = errInf("unknown tool")
 
+// ApprovalRequest is what side-effecting tools (notably bash) hand to
+// Env.Approve before running. The TUI renders these as a confirmation
+// panel; headless callers can default-deny.
+type ApprovalRequest struct {
+	Tool        string // "bash"
+	Command     string
+	Description string
+}
+
 type errInf string
 
 func (e errInf) Error() string { return string(e) }

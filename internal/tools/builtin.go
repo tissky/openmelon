@@ -48,6 +48,14 @@ type Env struct {
 	// decides which to wire based on what's configured.
 	Compiler *skillplus.Compiler
 	ImageGen imagegen.Generator
+
+	// Approve, when non-nil, is called by tools that need explicit
+	// user confirmation before running (notably bash). Returns true
+	// to proceed, false to abort. Synchronous — the tool blocks
+	// until the user answers via whatever UI is wired (TUI modal,
+	// stdin prompt, etc.). nil means side-effecting tools that need
+	// approval are skipped / default-denied.
+	Approve func(req ApprovalRequest) bool
 }
 
 // RegisterAll registers the full tool set into reg. Side-effecting
@@ -73,6 +81,7 @@ func RegisterAll(reg *Registry, env *Env) {
 		reg.Register(generateImageTool(env))
 	}
 	reg.Register(saveArtifactTool(env))
+	reg.Register(bashTool(env))
 	reg.Register(finishTool())
 }
 

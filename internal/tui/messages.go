@@ -46,3 +46,14 @@ type runDoneMsg struct {
 	Result *runtime.RunResult
 	Err    error
 }
+
+// approvalRequestMsg is what tools.Env.Approve sends when a tool
+// (currently just bash) needs the user to confirm. The TUI freezes
+// in a modal until the user picks Yes / No, then sends the boolean
+// down Reply.
+type approvalRequestMsg struct {
+	Tool        string
+	Command     string
+	Description string
+	Reply       chan bool
+}

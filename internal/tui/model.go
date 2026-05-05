@@ -42,10 +42,11 @@ const (
 	stateIdle runState = iota
 	stateRunning
 	stateQuitArmed
-	stateModelSelect      // /model — pick LLM from preset list
-	stateModelCustom      // /model → "Custom..." → typing a model id
-	stateImageModelSelect // /model-image — pick image model
-	stateImageModelCustom // /model-image → "Custom..." → typing
+	stateModelSelect       // /model — pick LLM from preset list
+	stateModelCustom       // /model → "Custom..." → typing a model id
+	stateImageModelSelect  // /model-image — pick image model
+	stateImageModelCustom  // /model-image → "Custom..." → typing
+	stateApprovalPending   // bash tool waiting on user confirmation
 )
 
 // Model is the Bubbletea Model. Constructed by Run() and never used
@@ -111,6 +112,11 @@ type Model struct {
 	customModelInput  textinput.Model
 	rebuildLLM        func(model string) (tag string, err error)
 	rebuildImageModel func(provider, model string) (tag string, err error)
+
+	// Active approval modal — set when an approvalRequestMsg arrives,
+	// cleared after the user answers. approvalCursor: 0=Yes, 1=No.
+	approvalReq    *approvalRequestMsg
+	approvalCursor int
 }
 
 // slashCommand is one row in the slash palette.
@@ -239,6 +245,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// Approval modal owns all input until the user answers.
+		if m.state == stateApprovalPending {
+			m.updateApproval(msg)
+			return m, tea.Batch(cmds...)
+		}
 		// Selector states own all key input until they exit.
 		if m.inSelector() {
 			switch m.state {
@@ -397,6 +408,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Spacer between model turns inside one Run().
 		m.appendLine("")
 
+	case approvalRequestMsg:
+		// Worker goroutine is blocked on msg.Reply. Stash the request
+		// and switch to the approval-pending state so the next View()
+		// renders the modal.
+		req := msg
+		m.approvalReq = &req
+		m.approvalCursor = 0
+		m.state = stateApprovalPending
+		m.recomputeLayout()
+
 	case runDoneMsg:
 		m.state = stateIdle
 		if msg.Result != nil {
@@ -452,6 +473,8 @@ func (m *Model) View() string {
 		// is misleading — users tried to type into it.
 		b.WriteString(m.runningStatusRow())
 		b.WriteString("\n")
+	case stateApprovalPending:
+		b.WriteString(m.renderApproval())
 	case stateModelSelect, stateImageModelSelect:
 		b.WriteString(m.renderSelector())
 	case stateModelCustom, stateImageModelCustom:
@@ -562,6 +585,18 @@ func (m *Model) recomputeLayout() {
 	switch m.state {
 	case stateRunning:
 		overlayRows = 1 // single status row
+	case stateApprovalPending:
+		// Bash command + description + 2 menu rows + a few framing
+		// lines. Estimate from the request body so a multi-line script
+		// gets enough room.
+		body := 1
+		if m.approvalReq != nil {
+			body = strings.Count(m.approvalReq.Command, "\n") + 1
+			if body > 12 {
+				body = 12
+			}
+		}
+		overlayRows = body + 8 // header + body + desc + question + 2 rows + footer + spacing
 	case stateModelSelect, stateImageModelSelect:
 		overlayRows = len(m.modelSelectorRows()) + 5 // header+desc+blank+rows+blank+footer
 	case stateModelCustom, stateImageModelCustom:
@@ -1159,4 +1194,88 @@ func (m *Model) inSelector() bool {
 		return true
 	}
 	return false
+}
+
+// =====================================================================
+// Approval modal (bash tool confirmation)
+// =====================================================================
+
+// updateApproval handles key input while a bash approval is pending.
+// 1 / Enter / y → approve, 2 / n / Esc → deny. Approval is sent to the
+// worker goroutine via the request's Reply channel.
+func (m *Model) updateApproval(msg tea.KeyMsg) {
+	switch msg.String() {
+	case "up", "k":
+		if m.approvalCursor > 0 {
+			m.approvalCursor--
+		}
+	case "down", "j":
+		if m.approvalCursor < 1 {
+			m.approvalCursor++
+		}
+	case "1", "y", "Y":
+		m.approvalCursor = 0
+		m.answerApproval(true)
+	case "2", "n", "N", "esc":
+		m.approvalCursor = 1
+		m.answerApproval(false)
+	case "enter":
+		m.answerApproval(m.approvalCursor == 0)
+	}
+}
+
+// answerApproval sends the user's choice back to the worker goroutine
+// and transitions back to stateRunning so the spinner / activity row
+// resumes (the worker will emit more events as the rest of the run
+// continues, including possibly another approval request).
+func (m *Model) answerApproval(approved bool) {
+	if m.approvalReq == nil {
+		return
+	}
+	// Non-blocking send: Reply has buffer=1.
+	m.approvalReq.Reply <- approved
+	m.approvalReq = nil
+	m.state = stateRunning
+	if approved {
+		m.activityText = "Running bash"
+	} else {
+		m.activityText = "Bash denied"
+	}
+	m.recomputeLayout()
+}
+
+// renderApproval draws the bash-confirmation panel.
+func (m *Model) renderApproval() string {
+	r := m.approvalReq
+	if r == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(headerStyle.Render("Bash command"))
+	b.WriteString("\n\n")
+	for _, line := range strings.Split(r.Command, "\n") {
+		fmt.Fprintf(&b, "  %s\n", line)
+	}
+	if strings.TrimSpace(r.Description) != "" {
+		b.WriteString("\n")
+		b.WriteString(styleHelp.Render(r.Description))
+		b.WriteString("\n")
+	}
+	b.WriteString("\nDo you want to proceed?\n")
+	options := []string{"Yes", "No"}
+	for i, opt := range options {
+		marker := "  "
+		num := fmt.Sprintf("%d.", i+1)
+		title := opt
+		if i == m.approvalCursor {
+			marker = stylePromptArrow.Render("› ")
+			num = stylePaletteActive.Render(num)
+			title = stylePaletteActive.Render(opt)
+		}
+		fmt.Fprintf(&b, "%s%s %s\n", marker, num, title)
+	}
+	b.WriteString("\n")
+	b.WriteString(styleHelp.Render("Enter to confirm · Esc to deny · 1/2 shortcut"))
+	b.WriteString("\n")
+	return b.String()
 }

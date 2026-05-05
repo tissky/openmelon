@@ -94,7 +94,16 @@ func runRepl(_ []string) error {
 	// the /model-image hot-swap closure below — both need the same
 	// "compose env, register, assign" sequence with whatever the
 	// latest imgGen + sessionDir are.
+	//
+	// approveHolder.fn is what tools.Env.Approve indirects through. It
+	// starts nil (bash tool will return "no approval gate"), and gets
+	// filled in by tui.Run via Options.InstallApprove. Using a holder
+	// rather than baking the func into env directly means rebuilds
+	// don't lose the approval wiring.
 	var sessionDir string
+	approveHolder := &struct {
+		fn func(req tools.ApprovalRequest) bool
+	}{}
 	rebuildToolsEnv := func() {
 		reg := tools.NewRegistry()
 		tools.RegisterAll(reg, &tools.Env{
@@ -103,6 +112,12 @@ func runRepl(_ []string) error {
 			SessionDir: sessionDir,
 			Compiler:   &skillplus.Compiler{},
 			ImageGen:   imgGen,
+			Approve: func(req tools.ApprovalRequest) bool {
+				if approveHolder.fn == nil {
+					return false
+				}
+				return approveHolder.fn(req)
+			},
 		})
 		rt.Registry = reg
 	}
@@ -199,6 +214,9 @@ func runRepl(_ []string) error {
 			ImageModel:        imageModel,
 			RebuildLLM:        rebuildLLM,
 			RebuildImageModel: rebuildImageModel,
+			InstallApprove: func(approve func(req tools.ApprovalRequest) bool) {
+				approveHolder.fn = approve
+			},
 		})
 	}
 
