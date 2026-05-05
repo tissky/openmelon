@@ -7,14 +7,15 @@ import (
 	"path/filepath"
 	"text/tabwriter"
 
+	"github.com/eight-acres-lab/openmelon/internal/onboard"
 	"github.com/eight-acres-lab/openmelon/internal/projectx"
 	"github.com/eight-acres-lab/openmelon/internal/userconfig"
 )
 
-// runProject dispatches `openmelon project <list|use|show>`.
+// runProject dispatches `openmelon project <subcommand>`.
 func runProject(args []string) error {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: openmelon project <list|use|show> ...")
+		fmt.Fprintln(os.Stderr, "usage: openmelon project <list|use|show|set-key|unset-key|keys> ...")
 		os.Exit(2)
 	}
 	switch args[0] {
@@ -24,6 +25,12 @@ func runProject(args []string) error {
 		return runProjectUse(args[1:])
 	case "show":
 		return runProjectShow(args[1:])
+	case "set-key":
+		return runProjectSetKey(args[1:])
+	case "unset-key":
+		return runProjectUnsetKey(args[1:])
+	case "keys":
+		return runProjectKeys(args[1:])
 	default:
 		return fmt.Errorf("unknown project subcommand: %q", args[0])
 	}
@@ -114,6 +121,108 @@ func runProjectShow(args []string) error {
 		if p.Defaults.Locale != "" {
 			fmt.Printf("  locale:         %s\n", p.Defaults.Locale)
 		}
+	}
+	printKeySources(wd)
+	return nil
+}
+
+// printKeySources writes a "Credentials:" block showing which provider
+// keys are configured for this project, where they came from (project /
+// global / none), and a masked value.
+func printKeySources(wd string) {
+	providers := []string{"openrouter", "openai", "anthropic"}
+	type row struct{ provider, source, value string }
+	var rows []row
+	for _, p := range providers {
+		k, src := userconfig.ResolveAPIKey(wd, p)
+		if src == userconfig.SourceNone {
+			continue
+		}
+		rows = append(rows, row{provider: p, source: string(src), value: maskKey(k)})
+	}
+	if len(rows) == 0 {
+		return
+	}
+	fmt.Println("Credentials:")
+	for _, r := range rows {
+		fmt.Printf("  %-11s %s  (%s)\n", r.provider+":", r.source, r.value)
+	}
+}
+
+func maskKey(k string) string {
+	if len(k) <= 8 {
+		return "•••"
+	}
+	return k[:4] + "…" + k[len(k)-4:]
+}
+
+// runProjectSetKey is `openmelon project set-key [<provider>]`.
+//
+// Without a provider arg, opens the interactive wizard (provider picker
+// + masked key input). With a provider arg, skips the picker.
+func runProjectSetKey(args []string) error {
+	wd, _, err := resolveProjectWorkdir(nil)
+	if err != nil {
+		return err
+	}
+	hint := ""
+	if len(args) > 0 {
+		hint = args[0]
+	}
+	_, ok, err := onboard.RunProjectKeyWizard(wd, hint)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		fmt.Fprintln(os.Stderr, "cancelled.")
+	}
+	return nil
+}
+
+// runProjectUnsetKey is `openmelon project unset-key <provider>`.
+func runProjectUnsetKey(args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("usage: openmelon project unset-key <provider>")
+	}
+	wd, _, err := resolveProjectWorkdir(nil)
+	if err != nil {
+		return err
+	}
+	creds, err := userconfig.LoadProjectCredentials(wd)
+	if err != nil {
+		return err
+	}
+	if _, had := creds.APIKeys[args[0]]; !had {
+		fmt.Printf("No project-scoped key set for %s (nothing to remove).\n", args[0])
+		return nil
+	}
+	if err := userconfig.UnsetProjectAPIKey(wd, args[0]); err != nil {
+		return err
+	}
+	fmt.Printf("Removed project key for %s.\n", args[0])
+	return nil
+}
+
+// runProjectKeys is `openmelon project keys`. Lists what keys are
+// configured for the current project (project + global, masked).
+func runProjectKeys(_ []string) error {
+	wd, _, err := resolveProjectWorkdir(nil)
+	if err != nil {
+		return err
+	}
+	providers := []string{"openrouter", "openai", "anthropic"}
+	any := false
+	for _, p := range providers {
+		k, src := userconfig.ResolveAPIKey(wd, p)
+		if src == userconfig.SourceNone {
+			fmt.Printf("  %-11s (none)\n", p+":")
+			continue
+		}
+		any = true
+		fmt.Printf("  %-11s %s  (%s)\n", p+":", src, maskKey(k))
+	}
+	if !any {
+		fmt.Fprintln(os.Stderr, "No API keys configured. Run `openmelon setup` (global) or `openmelon project set-key` (project-scoped).")
 	}
 	return nil
 }

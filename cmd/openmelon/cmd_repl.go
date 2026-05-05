@@ -47,10 +47,10 @@ func runRepl(_ []string) error {
 	if imageProvider == "" {
 		imageProvider = "openrouter"
 	}
-	// Pull the API key out of credentials.json if we have one stored.
+	// Resolve the API key with project-overrides-global semantics.
 	apiKey := ""
 	if llmProvider != "auto" {
-		apiKey = userconfig.GetAPIKey(llmProvider)
+		apiKey, _ = userconfig.ResolveAPIKey(wd, llmProvider)
 	}
 
 	llmClient, err := llm.New(llmProvider, apiKey, "", llmModel)
@@ -70,7 +70,7 @@ func runRepl(_ []string) error {
 
 	var imgGen imagegen.Generator
 	if imageModel != "" {
-		imgKey := userconfig.GetAPIKey(imageProvider)
+		imgKey, _ := userconfig.ResolveAPIKey(wd, imageProvider)
 		imgGen, err = imagegen.New(imageProvider, imgKey, "", imageModel)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "openmelon: image generation disabled (%v)\n", err)
