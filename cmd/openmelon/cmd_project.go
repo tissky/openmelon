@@ -122,6 +122,15 @@ func runProjectShow(args []string) error {
 			fmt.Printf("  locale:         %s\n", p.Defaults.Locale)
 		}
 	}
+	if p.Settings != (projectx.Settings{}) {
+		fmt.Println("Settings:")
+		if p.Settings.BashPermissionMode != "" {
+			fmt.Printf("  bash_permission_mode: %s\n", p.Settings.EffectiveBashMode())
+		}
+		if p.Settings.ReasoningEffort != "" {
+			fmt.Printf("  reasoning_effort:    %s\n", p.Settings.EffectiveReasoningEffort())
+		}
+	}
 	printKeySources(wd)
 	return nil
 }
@@ -134,11 +143,15 @@ func printKeySources(wd string) {
 	type row struct{ provider, source, value string }
 	var rows []row
 	for _, p := range providers {
-		k, src := userconfig.ResolveAPIKey(wd, p)
-		if src == userconfig.SourceNone {
+		resolved := userconfig.ResolveProvider(wd, p)
+		if resolved.APIKey == "" {
 			continue
 		}
-		rows = append(rows, row{provider: p, source: string(src), value: maskKey(k)})
+		src := resolved.KeySource
+		if src == "" {
+			src = "unknown"
+		}
+		rows = append(rows, row{provider: p, source: src, value: maskKey(resolved.APIKey)})
 	}
 	if len(rows) == 0 {
 		return

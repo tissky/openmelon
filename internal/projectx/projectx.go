@@ -72,6 +72,11 @@ type Project struct {
 	// Empty strings fall back to user defaults.
 	Defaults Defaults `json:"defaults,omitempty"`
 
+	// Providers holds project-scoped provider connection settings.
+	// Values here override ~/.openmelon/config.json providers and
+	// credentials.json/env fallbacks.
+	Providers map[string]ProviderConfig `json:"providers,omitempty"`
+
 	// Settings collects per-project agent behavior toggles. Edited via
 	// the /settings TUI panel; surfaced in `openmelon project show`.
 	Settings Settings `json:"settings,omitempty"`
@@ -110,6 +115,12 @@ type Settings struct {
 	// BashPermissionMode selects the approval gate for the bash tool.
 	// Empty defaults to BashModeStrict.
 	BashPermissionMode BashPermissionMode `json:"bash_permission_mode,omitempty"`
+
+	// ReasoningEffort is the model thinking-depth sent with each agent
+	// request when the provider supports it. Empty defaults to "xhigh"
+	// for GPT-5-family OpenAI/OpenRouter models and provider default
+	// elsewhere.
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 }
 
 // EffectiveBashMode returns the mode the runtime should use, applying
@@ -122,6 +133,17 @@ func (s Settings) EffectiveBashMode() BashPermissionMode {
 	return BashModeStrict
 }
 
+// EffectiveReasoningEffort returns the configured model thinking depth.
+// Empty means callers should pick a model-aware default.
+func (s Settings) EffectiveReasoningEffort() string {
+	switch strings.ToLower(strings.TrimSpace(s.ReasoningEffort)) {
+	case "none", "minimal", "low", "medium", "high", "xhigh":
+		return strings.ToLower(strings.TrimSpace(s.ReasoningEffort))
+	default:
+		return ""
+	}
+}
+
 // Defaults are per-project overrides for the model + locale knobs.
 // Mirror of userconfig.Defaults so projects can pin their own.
 type Defaults struct {
@@ -131,6 +153,13 @@ type Defaults struct {
 	ImageModel    string `json:"image_model,omitempty"`
 	VisionModel   string `json:"vision_model,omitempty"`
 	Locale        string `json:"locale,omitempty"`
+}
+
+// ProviderConfig mirrors userconfig.ProviderConfig without importing
+// userconfig (which would create an import cycle).
+type ProviderConfig struct {
+	APIKey  string `json:"api_key,omitempty"`
+	BaseURL string `json:"base_url,omitempty"`
 }
 
 var slugRe = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
@@ -168,7 +197,7 @@ func Init(workdir, id, name string) (*Project, error) {
 	if _, err := os.Stat(ConfigPath(workdir)); err == nil {
 		return nil, ErrAlreadyInitialized
 	}
-	for _, sub := range []string{"characters", "references", "materials", "artifacts", "sessions"} {
+	for _, sub := range []string{"characters", "references", "materials", "artifacts", "sessions", "spaces"} {
 		if err := os.MkdirAll(filepath.Join(StateDir(workdir), sub), 0o755); err != nil {
 			return nil, fmt.Errorf("projectx: mkdir %s: %w", sub, err)
 		}
@@ -197,6 +226,7 @@ func Init(workdir, id, name string) (*Project, error) {
 //
 // Things deliberately NOT excluded:
 //   - characters/ + references/  user-curated content; usually wants to commit
+//   - spaces/                    creative continuity state; usually wants to commit
 //   - artifacts/                 intentional outputs; user may want to ship them
 //   - materials/                 ambiguous; left to the user
 //   - project.json               always commit

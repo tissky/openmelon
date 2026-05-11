@@ -27,7 +27,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eight-acres-lab/openmelon/internal/continuity"
+	"github.com/eight-acres-lab/openmelon/internal/hooks"
 	"github.com/eight-acres-lab/openmelon/internal/imagegen"
+	"github.com/eight-acres-lab/openmelon/internal/policy"
 	"github.com/eight-acres-lab/openmelon/internal/projectx"
 	"github.com/eight-acres-lab/openmelon/internal/registry"
 	"github.com/eight-acres-lab/openmelon/internal/search"
@@ -77,6 +80,14 @@ type Env struct {
 	// auto / trusted). The bash tool reads this each call. Empty
 	// string defaults to strict.
 	BashMode string
+
+	// Hooks observes or gates lifecycle events. Continuity tools call
+	// Before/AfterContinuityWrite around durable creative-state writes.
+	Hooks hooks.Manager
+
+	// Policy gates side effects. nil uses DefaultEnforcer with this
+	// Env's bash settings and permissive continuity writes.
+	Policy policy.Enforcer
 }
 
 // RegisterAll registers the full tool set into reg. Side-effecting
@@ -93,6 +104,19 @@ func RegisterAll(reg *Registry, env *Env) {
 	reg.Register(getReferenceTool(env))
 	reg.Register(searchTool(env))
 	reg.Register(readFileTool(env))
+	reg.Register(listSpacesTool(env))
+	reg.Register(planWorkflowTool(env))
+	reg.Register(createSpaceTool(env))
+	reg.Register(getContextPacketTool(env))
+	reg.Register(activateSpaceTool(env))
+	reg.Register(recordDecisionTool(env))
+	reg.Register(recordFeedbackTool(env))
+	reg.Register(recordMemoryItemTool(env))
+	reg.Register(promoteMemoryItemTool(env))
+	reg.Register(createEpisodeTool(env))
+	reg.Register(registerAssetTool(env))
+	reg.Register(updateAssetWeightTool(env))
+	reg.Register(recordCompactionTool(env))
 
 	// Side-effecting.
 	if env.Compiler != nil {
@@ -104,6 +128,93 @@ func RegisterAll(reg *Registry, env *Env) {
 	reg.Register(saveArtifactTool(env))
 	reg.Register(bashTool(env))
 	reg.Register(finishTool())
+}
+
+func (env *Env) policy() policy.Enforcer {
+	if env.Policy != nil {
+		return env.Policy
+	}
+	return policy.DefaultEnforcer{
+		BashMode:      projectx.BashPermissionMode(env.BashMode),
+		IsBashAllowed: env.IsBashAllowed,
+		JudgeBash: func(ctx context.Context, command, description string) policy.BashJudgement {
+			if env.JudgeBash == nil {
+				return policy.BashAsk
+			}
+			switch env.JudgeBash(ctx, command, description) {
+			case BashAuto:
+				return policy.BashAuto
+			case BashBlock:
+				return policy.BashBlock
+			default:
+				return policy.BashAsk
+			}
+		},
+	}
+}
+
+func (env *Env) beforeContinuityWrite(ctx context.Context, tool, spaceID string, raw json.RawMessage) (json.RawMessage, map[string]any, bool) {
+	if resp := env.policy().Check(ctx, policy.Request{
+		Action:      "continuity.write",
+		Tool:        tool,
+		Workdir:     env.Workdir,
+		SpaceID:     spaceID,
+		Description: "write creative continuity state",
+	}); resp.Decision == policy.Deny {
+		return raw, map[string]any{"error": policy.ReasonOrDefault(resp.Reason, "continuity write denied by policy")}, false
+	}
+	if env.Hooks == nil {
+		return raw, nil, true
+	}
+	hr := env.Hooks.BeforeContinuityWrite(ctx, hooks.ContinuityWriteEvent{
+		Tool:    tool,
+		Workdir: env.Workdir,
+		SpaceID: spaceID,
+		Payload: raw,
+	})
+	switch hr.EffectiveDecision() {
+	case hooks.Deny, hooks.Cancel:
+		return raw, map[string]any{"error": "continuity write blocked by hook: " + hr.Reason}, false
+	}
+	if len(hr.RewriteContinuityPayload) > 0 {
+		return hr.RewriteContinuityPayload, nil, true
+	}
+	return raw, nil, true
+}
+
+func (env *Env) afterContinuityWrite(ctx context.Context, tool, spaceID string, raw json.RawMessage, result any, err error) {
+	if env.Hooks == nil {
+		return
+	}
+	env.Hooks.AfterContinuityWrite(ctx, hooks.ContinuityWriteEvent{
+		Tool:    tool,
+		Workdir: env.Workdir,
+		SpaceID: spaceID,
+		Payload: raw,
+		Result:  result,
+		Err:     err,
+	})
+}
+
+func rawSpaceID(raw json.RawMessage) (string, bool) {
+	var args struct {
+		SpaceID string `json:"space_id"`
+		ID      string `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &args); err != nil {
+		return "", false
+	}
+	if strings.TrimSpace(args.SpaceID) != "" {
+		return strings.TrimSpace(args.SpaceID), true
+	}
+	if strings.TrimSpace(args.ID) != "" {
+		return strings.TrimSpace(args.ID), true
+	}
+	return "", false
+}
+
+func spID(id string) string {
+	return strings.TrimSpace(id)
 }
 
 // --- read-only tools ---
@@ -315,6 +426,656 @@ func readFileTool(env *Env) Tool {
 	}
 }
 
+func listSpacesTool(env *Env) Tool {
+	return Tool{
+		Spec: Spec{
+			Name:        "list_spaces",
+			Description: "List or search creative continuity spaces. Use this before starting a long-running series, continuing one, or deciding whether a request belongs to an existing space.",
+			Parameters: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"query": {"type": "string", "description": "Optional search query over space id, name, description, platform, audience, and tags"}
+				}
+			}`),
+		},
+		Handler: func(ctx context.Context, raw json.RawMessage) (any, error) {
+			var args struct{ Query string }
+			_ = json.Unmarshal(raw, &args)
+			if strings.TrimSpace(args.Query) != "" {
+				hits, err := continuity.SearchSpaces(env.Workdir, args.Query)
+				if err != nil {
+					return nil, err
+				}
+				out := []map[string]any{}
+				for _, h := range hits {
+					out = append(out, map[string]any{
+						"score":       h.Score,
+						"id":          h.Space.ID,
+						"name":        h.Space.Name,
+						"status":      h.Space.Status,
+						"platform":    h.Space.Platform,
+						"audience":    h.Space.Audience,
+						"description": h.Space.Description,
+						"tags":        h.Space.Tags,
+					})
+				}
+				return out, nil
+			}
+			spaces, err := continuity.ListSpaces(env.Workdir)
+			if err != nil {
+				return nil, err
+			}
+			out := []map[string]any{}
+			for _, sp := range spaces {
+				out = append(out, map[string]any{
+					"id":          sp.ID,
+					"name":        sp.Name,
+					"status":      sp.Status,
+					"platform":    sp.Platform,
+					"audience":    sp.Audience,
+					"description": sp.Description,
+					"tags":        sp.Tags,
+				})
+			}
+			return out, nil
+		},
+	}
+}
+
+func planWorkflowTool(env *Env) Tool {
+	return Tool{
+		Spec: Spec{
+			Name:        "plan_creator_workflow",
+			Description: "Plan how to handle the user's creative request: start a new space, confirm a draft space, or continue an active space. Use before making durable continuity writes when the workflow is ambiguous.",
+			Parameters: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"intent": {"type": "string"}
+				},
+				"required": ["intent"]
+			}`),
+		},
+		Handler: func(ctx context.Context, raw json.RawMessage) (any, error) {
+			var args struct{ Intent string }
+			if err := json.Unmarshal(raw, &args); err != nil {
+				return nil, fmt.Errorf("invalid args: %w", err)
+			}
+			p, err := continuity.PlanWorkflow(env.Workdir, args.Intent)
+			if err != nil {
+				return map[string]any{"error": err.Error()}, nil
+			}
+			return p, nil
+		},
+	}
+}
+
+func createSpaceTool(env *Env) Tool {
+	return Tool{
+		Spec: Spec{
+			Name:        "create_space",
+			Description: "Create a draft creative continuity space for a durable series/account/campaign context. This tool stores only provisional assumptions, not confirmed canon. Ask concise clarification questions before treating assumptions as long-term rules.",
+			Parameters: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"id": {"type": "string", "description": "kebab-case space id"},
+					"name": {"type": "string"},
+					"platform": {"type": "string"},
+					"audience": {"type": "string"},
+					"description": {"type": "string"},
+					"tags": {"type": "array", "items": {"type": "string"}},
+					"assumptions": {"type": "string", "description": "Provisional setup assumptions and open questions. Low authority until the user confirms them."}
+				},
+				"required": ["id", "name"]
+			}`),
+		},
+		Handler: func(ctx context.Context, raw json.RawMessage) (any, error) {
+			var args struct {
+				ID          string
+				Name        string
+				Platform    string
+				Audience    string
+				Description string
+				Tags        []string
+				Assumptions string
+			}
+			if err := json.Unmarshal(raw, &args); err != nil {
+				return nil, fmt.Errorf("invalid args: %w", err)
+			}
+			raw, blocked, ok := env.beforeContinuityWrite(ctx, "create_space", args.ID, raw)
+			if !ok {
+				return blocked, nil
+			}
+			if err := json.Unmarshal(raw, &args); err != nil {
+				return nil, fmt.Errorf("invalid args: %w", err)
+			}
+			sp, err := continuity.CreateSpace(env.Workdir, continuity.CreateSpaceOptions{
+				ID:          args.ID,
+				Name:        args.Name,
+				Platform:    args.Platform,
+				Audience:    args.Audience,
+				Description: args.Description,
+				Tags:        args.Tags,
+				Assumptions: args.Assumptions,
+			})
+			env.afterContinuityWrite(ctx, "create_space", spID(args.ID), raw, sp, err)
+			if err != nil {
+				return map[string]any{"error": err.Error()}, nil
+			}
+			return map[string]any{
+				"id":          sp.ID,
+				"name":        sp.Name,
+				"status":      sp.Status,
+				"description": sp.Description,
+				"dir":         continuity.SpaceDir(env.Workdir, sp.ID),
+				"next_action": "Ask the user to confirm or correct the provisional assumptions before recording decisions or treating them as canon.",
+			}, nil
+		},
+	}
+}
+
+func getContextPacketTool(env *Env) Tool {
+	return Tool{
+		Spec: Spec{
+			Name:        "get_context_packet",
+			Description: "Fetch the model-readable continuity context packet for a creative space: authority notes, provisional assumptions, confirmed canon, memory, plan, recent decisions, feedback, episodes, and assets. Use before producing or continuing content in that space.",
+			Parameters: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"space_id": {"type": "string"},
+					"query": {"type": "string", "description": "Current creative intent or retrieval hint for ranking assets"},
+					"max_decisions": {"type": "number"},
+					"max_feedback": {"type": "number"},
+					"max_episodes": {"type": "number"},
+					"max_assets": {"type": "number"}
+				},
+				"required": ["space_id"]
+			}`),
+		},
+		Handler: func(ctx context.Context, raw json.RawMessage) (any, error) {
+			var args struct {
+				SpaceID      string `json:"space_id"`
+				Query        string
+				MaxDecisions int `json:"max_decisions"`
+				MaxFeedback  int `json:"max_feedback"`
+				MaxEpisodes  int `json:"max_episodes"`
+				MaxAssets    int `json:"max_assets"`
+			}
+			if err := json.Unmarshal(raw, &args); err != nil {
+				return nil, fmt.Errorf("invalid args: %w", err)
+			}
+			projectID := ""
+			if env.Project != nil {
+				projectID = env.Project.ID
+			}
+			p, err := continuity.BuildSelectedContextPacket(env.Workdir, projectID, args.SpaceID, continuity.SelectionOptions{
+				Query:        args.Query,
+				MaxDecisions: args.MaxDecisions,
+				MaxFeedback:  args.MaxFeedback,
+				MaxEpisodes:  args.MaxEpisodes,
+				MaxAssets:    args.MaxAssets,
+			})
+			if err != nil {
+				return map[string]any{"error": err.Error()}, nil
+			}
+			return p, nil
+		},
+	}
+}
+
+func activateSpaceTool(env *Env) Tool {
+	return Tool{
+		Spec: Spec{
+			Name:        "activate_space",
+			Description: "Activate a draft creative space after the user explicitly confirms the core direction. Records the confirmation as a decision. Use before creating durable episodes in a new space.",
+			Parameters: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"space_id": {"type": "string"},
+					"decision": {"type": "string", "description": "What the user confirmed"},
+					"reason": {"type": "string"},
+					"weight": {"type": "number"}
+				},
+				"required": ["space_id", "decision"]
+			}`),
+		},
+		Handler: func(ctx context.Context, raw json.RawMessage) (any, error) {
+			spaceID, _ := rawSpaceID(raw)
+			raw, blocked, ok := env.beforeContinuityWrite(ctx, "activate_space", spaceID, raw)
+			if !ok {
+				return blocked, nil
+			}
+			var args struct {
+				SpaceID  string `json:"space_id"`
+				Decision string
+				Reason   string
+				Weight   float64
+			}
+			if err := json.Unmarshal(raw, &args); err != nil {
+				return nil, fmt.Errorf("invalid args: %w", err)
+			}
+			sp, d, err := continuity.ActivateSpace(env.Workdir, args.SpaceID, continuity.Decision{
+				Decision: args.Decision,
+				Reason:   args.Reason,
+				Weight:   args.Weight,
+			})
+			env.afterContinuityWrite(ctx, "activate_space", args.SpaceID, raw, sp, err)
+			if err != nil {
+				return map[string]any{"error": err.Error()}, nil
+			}
+			return map[string]any{
+				"id":       sp.ID,
+				"name":     sp.Name,
+				"status":   sp.Status,
+				"decision": d,
+			}, nil
+		},
+	}
+}
+
+func recordDecisionTool(env *Env) Tool {
+	return Tool{
+		Spec: Spec{
+			Name:        "record_decision",
+			Description: "Record a user-confirmed continuity decision for a creative space. Do not use for guesses; only record decisions the user accepted or clearly instructed.",
+			Parameters: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"space_id": {"type": "string"},
+					"scope": {"type": "string", "description": "space, episode, asset, style, character, scene"},
+					"target": {"type": "string"},
+					"decision": {"type": "string"},
+					"reason": {"type": "string"},
+					"weight": {"type": "number"}
+				},
+				"required": ["space_id", "decision"]
+			}`),
+		},
+		Handler: func(ctx context.Context, raw json.RawMessage) (any, error) {
+			spaceID, _ := rawSpaceID(raw)
+			raw, blocked, ok := env.beforeContinuityWrite(ctx, "record_decision", spaceID, raw)
+			if !ok {
+				return blocked, nil
+			}
+			var args struct {
+				SpaceID  string `json:"space_id"`
+				Scope    string
+				Target   string
+				Decision string
+				Reason   string
+				Weight   float64
+			}
+			if err := json.Unmarshal(raw, &args); err != nil {
+				return nil, fmt.Errorf("invalid args: %w", err)
+			}
+			d, err := continuity.RecordDecision(env.Workdir, args.SpaceID, continuity.Decision{
+				Scope:    args.Scope,
+				Target:   args.Target,
+				Decision: args.Decision,
+				Reason:   args.Reason,
+				Weight:   args.Weight,
+			})
+			env.afterContinuityWrite(ctx, "record_decision", args.SpaceID, raw, d, err)
+			if err != nil {
+				return map[string]any{"error": err.Error()}, nil
+			}
+			return d, nil
+		},
+	}
+}
+
+func recordFeedbackTool(env *Env) Tool {
+	return Tool{
+		Spec: Spec{
+			Name:        "record_feedback",
+			Description: "Record user or audience feedback for a creative space so future production can adapt strategy, pacing, style, assets, or planning.",
+			Parameters: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"space_id": {"type": "string"},
+					"episode_id": {"type": "string"},
+					"source": {"type": "string"},
+					"signal": {"type": "string", "description": "normalized signal, e.g. pace_too_fast, style_worked, asset_drift"},
+					"evidence": {"type": "string"},
+					"recommendation": {"type": "string"}
+				},
+				"required": ["space_id", "signal"]
+			}`),
+		},
+		Handler: func(ctx context.Context, raw json.RawMessage) (any, error) {
+			spaceID, _ := rawSpaceID(raw)
+			raw, blocked, ok := env.beforeContinuityWrite(ctx, "record_feedback", spaceID, raw)
+			if !ok {
+				return blocked, nil
+			}
+			var args struct {
+				SpaceID        string `json:"space_id"`
+				EpisodeID      string `json:"episode_id"`
+				Source         string
+				Signal         string
+				Evidence       string
+				Recommendation string
+			}
+			if err := json.Unmarshal(raw, &args); err != nil {
+				return nil, fmt.Errorf("invalid args: %w", err)
+			}
+			f, err := continuity.RecordFeedback(env.Workdir, args.SpaceID, continuity.Feedback{
+				EpisodeID:      args.EpisodeID,
+				Source:         args.Source,
+				Signal:         args.Signal,
+				Evidence:       args.Evidence,
+				Recommendation: args.Recommendation,
+			})
+			env.afterContinuityWrite(ctx, "record_feedback", args.SpaceID, raw, f, err)
+			if err != nil {
+				return map[string]any{"error": err.Error()}, nil
+			}
+			return f, nil
+		},
+	}
+}
+
+func recordMemoryItemTool(env *Env) Tool {
+	return Tool{
+		Spec: Spec{
+			Name:        "record_memory_item",
+			Description: "Record a provisional memory item for a creative space. Use for observations, reusable patterns, weak preferences, or unresolved continuity notes that should not become confirmed canon yet.",
+			Parameters: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"space_id": {"type": "string"},
+					"id": {"type": "string"},
+					"kind": {"type": "string", "description": "observation, pattern, preference, risk, open_question"},
+					"scope": {"type": "string"},
+					"target": {"type": "string"},
+					"content": {"type": "string"},
+					"source": {"type": "string"},
+					"weight": {"type": "number"},
+					"status": {"type": "string", "description": "provisional, active, promoted, rejected"}
+				},
+				"required": ["space_id", "content"]
+			}`),
+		},
+		Handler: func(ctx context.Context, raw json.RawMessage) (any, error) {
+			spaceID, _ := rawSpaceID(raw)
+			raw, blocked, ok := env.beforeContinuityWrite(ctx, "record_memory_item", spaceID, raw)
+			if !ok {
+				return blocked, nil
+			}
+			var args struct {
+				SpaceID string `json:"space_id"`
+				ID      string
+				Kind    string
+				Scope   string
+				Target  string
+				Content string
+				Source  string
+				Weight  float64
+				Status  string
+			}
+			if err := json.Unmarshal(raw, &args); err != nil {
+				return nil, fmt.Errorf("invalid args: %w", err)
+			}
+			item, err := continuity.RecordMemoryItem(env.Workdir, args.SpaceID, continuity.MemoryItem{
+				ID:      args.ID,
+				Kind:    args.Kind,
+				Scope:   args.Scope,
+				Target:  args.Target,
+				Content: args.Content,
+				Source:  args.Source,
+				Weight:  args.Weight,
+				Status:  args.Status,
+			})
+			env.afterContinuityWrite(ctx, "record_memory_item", args.SpaceID, raw, item, err)
+			if err != nil {
+				return map[string]any{"error": err.Error()}, nil
+			}
+			return item, nil
+		},
+	}
+}
+
+func promoteMemoryItemTool(env *Env) Tool {
+	return Tool{
+		Spec: Spec{
+			Name:        "promote_memory_item",
+			Description: "Promote a provisional memory item into a user-confirmed continuity decision. Use only after the user explicitly confirms the memory should become durable guidance.",
+			Parameters: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"space_id": {"type": "string"},
+					"item_id": {"type": "string"},
+					"decision": {"type": "string"},
+					"reason": {"type": "string"},
+					"target": {"type": "string"}
+				},
+				"required": ["space_id", "item_id", "decision"]
+			}`),
+		},
+		Handler: func(ctx context.Context, raw json.RawMessage) (any, error) {
+			spaceID, _ := rawSpaceID(raw)
+			raw, blocked, ok := env.beforeContinuityWrite(ctx, "promote_memory_item", spaceID, raw)
+			if !ok {
+				return blocked, nil
+			}
+			var args struct {
+				SpaceID  string `json:"space_id"`
+				ItemID   string `json:"item_id"`
+				Decision string
+				Reason   string
+				Target   string
+			}
+			if err := json.Unmarshal(raw, &args); err != nil {
+				return nil, fmt.Errorf("invalid args: %w", err)
+			}
+			d, err := continuity.PromoteMemoryItem(env.Workdir, args.SpaceID, continuity.MemoryPromotion{
+				ItemID:   args.ItemID,
+				Decision: args.Decision,
+				Reason:   args.Reason,
+				Target:   args.Target,
+			})
+			env.afterContinuityWrite(ctx, "promote_memory_item", args.SpaceID, raw, d, err)
+			if err != nil {
+				return map[string]any{"error": err.Error()}, nil
+			}
+			return d, nil
+		},
+	}
+}
+
+func createEpisodeTool(env *Env) Tool {
+	return Tool{
+		Spec: Spec{
+			Name:        "create_episode",
+			Description: "Create or register an episode under a creative space. Use for durable production units such as daily posts, videos, chapters, or content installments.",
+			Parameters: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"space_id": {"type": "string"},
+					"id": {"type": "string"},
+					"title": {"type": "string"},
+					"topic": {"type": "string"},
+					"status": {"type": "string"},
+					"brief": {"type": "string", "description": "Brief markdown"}
+				},
+				"required": ["space_id", "topic"]
+			}`),
+		},
+		Handler: func(ctx context.Context, raw json.RawMessage) (any, error) {
+			spaceID, _ := rawSpaceID(raw)
+			raw, blocked, ok := env.beforeContinuityWrite(ctx, "create_episode", spaceID, raw)
+			if !ok {
+				return blocked, nil
+			}
+			var args struct {
+				SpaceID string `json:"space_id"`
+				ID      string
+				Title   string
+				Topic   string
+				Status  string
+				Brief   string
+			}
+			if err := json.Unmarshal(raw, &args); err != nil {
+				return nil, fmt.Errorf("invalid args: %w", err)
+			}
+			ep, err := continuity.CreateEpisode(env.Workdir, args.SpaceID, continuity.Episode{
+				ID:     args.ID,
+				Title:  args.Title,
+				Topic:  args.Topic,
+				Status: args.Status,
+				Brief:  args.Brief,
+			})
+			env.afterContinuityWrite(ctx, "create_episode", args.SpaceID, raw, ep, err)
+			if err != nil {
+				return map[string]any{"error": err.Error()}, nil
+			}
+			return ep, nil
+		},
+	}
+}
+
+func registerAssetTool(env *Env) Tool {
+	return Tool{
+		Spec: Spec{
+			Name:        "register_asset",
+			Description: "Register a reusable continuity asset under a creative space. Assets can be images, backgrounds, characters, props, prompt fragments, shot specs, masks, or PSD/layered files.",
+			Parameters: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"space_id": {"type": "string"},
+					"id": {"type": "string"},
+					"kind": {"type": "string"},
+					"status": {"type": "string", "description": "active, canonical, experimental, rejected, archived"},
+					"description": {"type": "string"},
+					"reuse_policy": {"type": "string"},
+					"files": {"type": "array", "items": {"type": "string"}},
+					"tags": {"type": "array", "items": {"type": "string"}},
+					"weight": {"type": "number"}
+				},
+				"required": ["space_id", "description"]
+			}`),
+		},
+		Handler: func(ctx context.Context, raw json.RawMessage) (any, error) {
+			spaceID, _ := rawSpaceID(raw)
+			raw, blocked, ok := env.beforeContinuityWrite(ctx, "register_asset", spaceID, raw)
+			if !ok {
+				return blocked, nil
+			}
+			var args struct {
+				SpaceID     string `json:"space_id"`
+				ID          string
+				Kind        string
+				Status      string
+				Description string
+				ReusePolicy string `json:"reuse_policy"`
+				Files       []string
+				Tags        []string
+				Weight      float64
+			}
+			if err := json.Unmarshal(raw, &args); err != nil {
+				return nil, fmt.Errorf("invalid args: %w", err)
+			}
+			a, err := continuity.RegisterAsset(env.Workdir, args.SpaceID, continuity.Asset{
+				ID:          args.ID,
+				Kind:        args.Kind,
+				Status:      args.Status,
+				Description: args.Description,
+				ReusePolicy: args.ReusePolicy,
+				Files:       args.Files,
+				Tags:        args.Tags,
+				Weight:      args.Weight,
+			})
+			env.afterContinuityWrite(ctx, "register_asset", args.SpaceID, raw, a, err)
+			if err != nil {
+				return map[string]any{"error": err.Error()}, nil
+			}
+			return a, nil
+		},
+	}
+}
+
+func updateAssetWeightTool(env *Env) Tool {
+	return Tool{
+		Spec: Spec{
+			Name:        "update_asset_weight",
+			Description: "Adjust a reusable continuity asset's weight or status after user/audience feedback. Use higher weights for assets that should be reused more often; lower or archive assets that drift or perform poorly.",
+			Parameters: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"space_id": {"type": "string"},
+					"asset_id": {"type": "string"},
+					"weight": {"type": "number"},
+					"status": {"type": "string", "description": "active, canonical, experimental, rejected, archived"}
+				},
+				"required": ["space_id", "asset_id", "weight"]
+			}`),
+		},
+		Handler: func(ctx context.Context, raw json.RawMessage) (any, error) {
+			spaceID, _ := rawSpaceID(raw)
+			raw, blocked, ok := env.beforeContinuityWrite(ctx, "update_asset_weight", spaceID, raw)
+			if !ok {
+				return blocked, nil
+			}
+			var args struct {
+				SpaceID string `json:"space_id"`
+				AssetID string `json:"asset_id"`
+				Weight  float64
+				Status  string
+			}
+			if err := json.Unmarshal(raw, &args); err != nil {
+				return nil, fmt.Errorf("invalid args: %w", err)
+			}
+			a, err := continuity.UpdateAssetWeight(env.Workdir, args.SpaceID, args.AssetID, args.Weight, args.Status)
+			env.afterContinuityWrite(ctx, "update_asset_weight", args.SpaceID, raw, a, err)
+			if err != nil {
+				return map[string]any{"error": err.Error()}, nil
+			}
+			return a, nil
+		},
+	}
+}
+
+func recordCompactionTool(env *Env) Tool {
+	return Tool{
+		Spec: Spec{
+			Name:        "record_compaction",
+			Description: "Record a compact summary of a creative space's long-running state. Use after reviewing selected context or when a series has accumulated enough history to need a reusable summary.",
+			Parameters: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"space_id": {"type": "string"},
+					"summary": {"type": "string"},
+					"scope": {"type": "string"}
+				},
+				"required": ["space_id", "summary"]
+			}`),
+		},
+		Handler: func(ctx context.Context, raw json.RawMessage) (any, error) {
+			spaceID, _ := rawSpaceID(raw)
+			raw, blocked, ok := env.beforeContinuityWrite(ctx, "record_compaction", spaceID, raw)
+			if !ok {
+				return blocked, nil
+			}
+			var args struct {
+				SpaceID string `json:"space_id"`
+				Summary string
+				Scope   string
+			}
+			if err := json.Unmarshal(raw, &args); err != nil {
+				return nil, fmt.Errorf("invalid args: %w", err)
+			}
+			c, err := continuity.RecordSpaceCompaction(env.Workdir, args.SpaceID, continuity.SpaceCompaction{
+				Summary: args.Summary,
+				Scope:   args.Scope,
+			})
+			env.afterContinuityWrite(ctx, "record_compaction", args.SpaceID, raw, c, err)
+			if err != nil {
+				return map[string]any{"error": err.Error()}, nil
+			}
+			return c, nil
+		},
+	}
+}
+
 // --- side-effecting tools ---
 
 func compileSkillTool(env *Env) Tool {
@@ -435,9 +1196,9 @@ func generateImageTool(env *Env) Tool {
 				refs = append(refs, b)
 			}
 			res, err := env.ImageGen.Generate(ctx, imagegen.GenerateOptions{
-				Prompt:           args.Prompt,
-				Size:             args.Size,
-				ReferenceImages:  refs,
+				Prompt:          args.Prompt,
+				Size:            args.Size,
+				ReferenceImages: refs,
 			})
 			if err != nil {
 				return map[string]any{"error": err.Error()}, nil
